@@ -66,7 +66,7 @@ if submit and (uploaded_file or startup_text.strip()):
 
             prompt = build_prompt(content)
             response = openai.ChatCompletion.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a startup investment analyst."},
                     {"role": "user", "content": prompt}
