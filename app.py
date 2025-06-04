@@ -24,4 +24,5 @@ rubric = {
 }
 
 # Prompt template
-prompt_templa_
+prompt_template.replace("{{input_text}}", startup_text)
+
