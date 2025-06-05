@@ -2,92 +2,64 @@ import streamlit as st
 import openai
 import os
 import PyPDF2
+from fpdf import FPDF
 
-# 🔐 Get API key from Streamlit Secrets
+# Set your OpenAI API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-st.set_page_config(page_title="Startup Deal Memo Generator", layout="centered")
-st.title("🧠 Comprehensive Startup Deal Evaluator")
-st.write("Upload a pitch deck or paste a founder note to generate a full investment memo with scorecard.")
+st.set_page_config(page_title="Startup Investment Memo Generator", layout="centered")
+st.title("📄 Startup Investment Memo Generator")
+st.write("Upload a pitch deck or paste a founder note to generate a formatted memo and download it as a PDF.")
 
-# Upload or paste pitch content
+# Input methods
 uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
 submit = st.button("🚀 Generate Investment Memo")
 
-# PDF to text extractor
+# Function to extract text from uploaded PDF
 def extract_text_from_pdf(file):
     pdf = PyPDF2.PdfReader(file)
     return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-# GPT prompt builder
+# GPT prompt for revised scoring and memo structure
 def build_prompt(text):
     return f"""
-You are a venture capital analyst. Based on the startup input below, write a detailed investment memo.
+You are a venture capital analyst. Based on the input below, write a detailed, well-formatted investment memo.
 
-Include the following 10 sections:
+Include these sections:
 
 1. Executive Summary  
-2. Team  
+2. Team (highlight relevant experience and time spent on this idea)  
 3. Product  
 4. Market  
-5. Traction  
+5. Traction (users, revenue, pilot metrics)  
 6. Business Model  
-7. Go-to-Market Strategy  
-8. Risks & Concerns  
-9. Investment Recommendation (score out of 10 with rationale)
+7. Profitability  
+8. Go-to-Market Strategy  
+9. Risks & Concerns  
+10. Investment Recommendation (score out of 10 with rationale)
 
-10. Scorecard Summary:
-Format as a table:
+Also include this updated Scorecard:
 
-| Category         | Score (1–10) |
-|------------------|--------------|
-| Team             |              |
-| Product          |              |
-| Market           |              |
-| Traction         |              |
-| Business Model   |              |
-| GTM Strategy     |              |
-| Risk Level       |              |
+| Category                   | Score (1–10) |
+|----------------------------|--------------|
+| Founder Experience         |              |
+| Time Spent on Idea         |              |
+| Product Quality            |              |
+| Market Size                |              |
+| Traction (Revenue/Users)   |              |
+| Business Model Clarity     |              |
+| Profitability Potential    |              |
+| Go-to-Market Strategy      |              |
+| Risk Level (lower = better)|              |
 
-Then conclude with:
+Conclude with:
 **→ Weighted Composite Score: x.xx / 10**
 
 Startup Input:
 {text}
 """
 
-# Run GPT
-if submit and (uploaded_file or startup_text.strip()):
-    with st.spinner("🧠 Thinking like an analyst..."):
-        try:
-            content = startup_text.strip()
-            if uploaded_file:
-                content = extract_text_from_pdf(uploaded_file)
-
-            prompt = build_prompt(content)
-
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a professional VC investment analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4
-            )
-
-            result = response.choices[0].message.content
-            st.markdown("---")
-            st.markdown("### 📋 Full Investment Memo")
-            st.text(result)
-
-            st.download_button(
-                label="📥 Download Memo",
-                data=result,
-                file_name="investment_memo.txt",
-                mime="text/plain"
-            )
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
-else:
-    st.info("Please upload a pitch deck or paste startup input above.")
+# Function to generate PDF from GPT output
+def generate_pdf(text):
+    pdf = FPDF()
