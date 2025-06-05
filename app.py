@@ -12,7 +12,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets 
 
 st.set_page_config(page_title="Startup One-Pager Generator", layout="centered")
 st.title("📄 Startup Deal Snapshot Generator")
-st.write("Upload a pitch deck or paste a founder note to generate a one-pager investment summary PDF.")
+st.write("Upload a pitch deck or paste a founder note to generate a crisp, score-led investment memo.")
 
 uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
@@ -24,17 +24,11 @@ def extract_text_from_pdf(file):
 
 def build_prompt(text):
     return f"""
-Act like a VC analyst. Read the founder input below and return a concise one-pager JSON with the following structure:
+Act like a VC analyst. Read the founder input below and return a crisp one-pager JSON with the following structure:
 
 {{
   "startup_name": "",
   "one_liner": "",
-  "team": [""],
-  "product": [""],
-  "market": "",
-  "traction": [""],
-  "business_model": "",
-  "risks": [""],
   "scorecard": {{
     "Founder Experience": 0,
     "Market Size": 0,
@@ -44,6 +38,12 @@ Act like a VC analyst. Read the founder input below and return a concise one-pag
     "Risk Level (low=better)": 0,
     "Composite Score": 0.0
   }},
+  "team": [""],
+  "product": [""],
+  "market": "",
+  "traction": [""],
+  "business_model": "",
+  "risks": [""],
   "annexures": {{
     "funding_raised": "",
     "shareholding_pattern": "",
@@ -68,17 +68,31 @@ def generate_one_pager(data):
     redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
     story = []
 
-    # Add logo if available
+    # Logo + Title
     logo_path = "logo.png"
     if os.path.exists(logo_path):
         logo = Image(logo_path, width=120, height=40)
         logo.hAlign = 'LEFT'
         story.append(logo)
 
-    # Title
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
     story.append(Paragraph(f"<b>{data.get('startup_name', 'Startup')}</b>", styles['Title']))
     story.append(Paragraph(data.get("one_liner", ""), styleN))
+    story.append(Spacer(1, 14))
+
+    # Scorecard at the top
+    story.append(Paragraph("<b>Scorecard</b>", styleH))
+    scorecard = data.get("scorecard", {})
+    table_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
+    table = Table(table_data, hAlign='LEFT', colWidths=[220, 80])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(table)
     story.append(Spacer(1, 12))
 
     def bullet_section(title, items):
@@ -98,33 +112,18 @@ def generate_one_pager(data):
     story.append(Spacer(1, 8))
     bullet_section("Risks", data.get("risks", []))
 
-    # Scorecard table
-    scorecard = data.get("scorecard", {})
-    table_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
-    table = Table(table_data, hAlign='LEFT', colWidths=[200, 80])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-    ]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("<b>Scorecard</b>", styleH))
-    story.append(table)
-
     # Annexures
     annex = data.get("annexures", {})
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
     story.append(Paragraph("<b>Annexures</b>", styleH))
     for label, value in annex.items():
         story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>", styleN))
         story.append(Paragraph(value if value.strip() else "Not Available", styleN))
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 4))
 
     # Inconsistencies
     inconsistencies = data.get("inconsistencies", [])
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
     story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
     if inconsistencies:
         for item in inconsistencies:
@@ -136,7 +135,7 @@ def generate_one_pager(data):
     return doc_path
 
 if submit and (startup_text.strip() or uploaded_file):
-    with st.spinner("🧠 Generating one-pager with annexures and inconsistencies..."):
+    with st.spinner("🧠 Generating one-pager with scoring and insights..."):
         try:
             content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
             prompt = build_prompt(content)
