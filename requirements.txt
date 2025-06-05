@@ -1,7 +1,7 @@
-openai==0.28.1
 streamlit
-PyPDF2
+openai
+PyMuPDF
 reportlab
-pdfplumber
+
 
 
