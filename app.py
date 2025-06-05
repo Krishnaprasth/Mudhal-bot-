@@ -4,7 +4,7 @@ import os
 import PyPDF2
 from fpdf import FPDF
 
-# ✅ Use API key from secrets or env
+# Set your OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="Startup Investment Memo Generator", layout="centered")
@@ -20,19 +20,25 @@ def extract_text_from_pdf(file):
     pdf = PyPDF2.PdfReader(file)
     return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-# ✅ Clean smart characters for PDF-safe output
+# ✅ Clean unsupported characters for PDF
 def clean_text(text):
     replacements = {
-        '\u2018': "'", '\u2019': "'",
-        '\u201c': '"', '\u201d': '"',
-        '\u2013': '-', '\u2014': '-',
-        '\u2022': '*', '\u00a0': ' '
+        '\u2018': "'", '\u2019': "'",    # single quotes
+        '\u201c': '"', '\u201d': '"',    # double quotes
+        '\u2013': '-', '\u2014': '-',    # dashes
+        '\u2022': '*',                   # bullet
+        '\u00a0': ' ',                   # non-breaking space
+        '\u2192': '->',                  # arrow
+        '\u2026': '...',                 # ellipsis
+        '\u2122': '(TM)',                # trademark
+        '\u00b7': '-',                   # middle dot
+        '\u00e9': 'e'                    # é to e
     }
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
     return text
 
-# ✅ Memo prompt with revised scoring matrix
+# ✅ Construct the prompt
 def build_prompt(text):
     return f"""
 You are a venture capital analyst. Based on the startup input below, write a detailed, well-formatted investment memo.
@@ -65,13 +71,13 @@ Include a scorecard:
 | Risk Level (lower = better)|              |
 
 Finish with:
-**→ Composite Score: x.xx / 10**
+**-> Composite Score: x.xx / 10**
 
 Startup Input:
 {text}
 """
 
-# ✅ Generate PDF memo
+# ✅ Generate PDF from memo
 def generate_pdf(text):
     cleaned = clean_text(text)
     pdf = FPDF()
@@ -107,7 +113,6 @@ if submit and (startup_text.strip() or uploaded_file):
             st.text(result)
 
             pdf_path = generate_pdf(result)
-
             with open(pdf_path, "rb") as f:
                 st.download_button("📥 Download as PDF", f, file_name="investment_memo.pdf", mime="application/pdf")
 
