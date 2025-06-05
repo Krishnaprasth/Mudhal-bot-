@@ -1,120 +1,177 @@
 import streamlit as st
-import json
-from openai import OpenAI
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-import os
 import PyPDF2
+import json
+import os
+from openai import OpenAI
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
+# Load API key
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def extract_text_from_pdf(file):
-    text = ""
-    reader = PyPDF2.PdfReader(file)
+def extract_text_from_pdf(uploaded_file):
+    reader = PyPDF2.PdfReader(uploaded_file)
+    full_text = ""
     for page in reader.pages:
-        text += page.extract_text() or ""
-    return text
+        text = page.extract_text()
+        if text:
+            full_text += text + "\n"
+    return full_text
 
-def build_prompt(text):
-    return f"""Act like a VC analyst. Read the input below and return JSON:
+def build_prompt_for_summary_and_scores(text):
+    return f"""
+You are a venture analyst. Based on the pitch deck text below, return a JSON object with:
+
+1. "summary": A crisp half-page summary (max 200 words) on the startup idea, founders, current status, traction, funding, and key facts.
+2. "scorecard": A nested dictionary with the following structure:
 {{
-  "startup_name": "",
-  "founder_names": [""],
-  "experience_summary": "",
-  "idea": "",
-  "product": "",
-  "traction": "",
-  "annexures": {{
-    "funding_raised": "",
-    "shareholding_pattern": "",
-    "financial_metrics": "",
-    "key_growth_metrics": ""
+  "Founders & Team (20%)": {{
+    "Founder relevant experience": 0,
+    "Founder full-time": 0,
+    "Team complementarity": 0,
+    "Past startup/domain experience": 0,
+    "Team size": 0,
+    "Key hires": 0,
+    "Cap table sanity": 0,
+    "Founder insight": 0,
+    "Motivation/resilience": 0,
+    "Execution bias": 0
   }},
-  "scorecard": {{
-    "Founder Experience": 0,
-    "Market Size": 0,
-    "Traction": 0,
-    "Product Clarity": 0,
-    "Revenue Potential": 0,
-    "Risk Level (low=better)": 0,
-    "Composite Score": 0.0
+  "Problem-Solution Fit (10%)": {{
+    "Problem clarity": 0,
+    "Pain severity": 0,
+    "Solution uniqueness": 0,
+    "Must-have need": 0,
+    "Simplicity": 0
   }},
-  "inconsistencies": [""]
+  "Product & Tech (10%)": {{
+    "Product clarity": 0,
+    "Working MVP": 0,
+    "Tech moat": 0,
+    "Scalability": 0,
+    "Defensibility": 0
+  }},
+  "Market & Timing (10%)": {{
+    "TAM size": 0,
+    "Market growth": 0,
+    "Timing fit": 0,
+    "Customer urgency": 0,
+    "Competition": 0
+  }},
+  "Traction (15%)": {{
+    "Revenue run rate": 0,
+    "Growth rate": 0,
+    "User/customer base": 0,
+    "Retention": 0,
+    "CAC": 0,
+    "LTV": 0,
+    "Gross margins": 0,
+    "Customer proof": 0
+  }},
+  "Business Model (10%)": {{
+    "Revenue model": 0,
+    "Pricing power": 0,
+    "Path to profitability": 0,
+    "Monetization": 0,
+    "Gross margin potential": 0
+  }},
+  "Financials (10%)": {{
+    "Cash runway": 0,
+    "Burn rate": 0,
+    "Unit economics": 0,
+    "Use of funds": 0,
+    "Capital efficiency": 0
+  }},
+  "Go-to-Market (5%)": {{
+    "Acquisition channels": 0,
+    "Sales strategy": 0,
+    "Distribution partnerships": 0
+  }},
+  "Risk (5%)": {{
+    "Regulatory": 0,
+    "Founder dependence": 0,
+    "Competition risk": 0,
+    "Legal/IP risk": 0,
+    "Data inconsistency": 0
+  }}
 }}
-Only output valid JSON. Input:
-{text}"""
 
-def generate_pdf(data):
+Each parameter must be scored 0–10. Output valid JSON only.
+Input:
+{text}
+"""
+
+def generate_pdf(summary_text, scores):
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate("memo.pdf", pagesize=A4)
+    doc = SimpleDocTemplate("investment_memo.pdf", pagesize=A4)
     story = []
-    styleN, styleH = styles["BodyText"], styles["Heading4"]
-    redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
 
-    company_name = data.get("startup_name", "Startup")
-    story.append(Paragraph(f"<b>{company_name} - Investment Memo</b>", styles["Title"]))
+    # Title
+    story.append(Paragraph("🚀 Investment Memo", styles["Title"]))
     story.append(Spacer(1, 12))
 
-    table_data = [
-        ["Company Name", company_name],
-        ["Founders", ", ".join(data.get("founder_names", []))],
-        ["Experience", data.get("experience_summary", "")],
-        ["Idea", data.get("idea", "")],
-        ["Product", data.get("product", "")],
-        ["Traction", data.get("traction", "")]
-    ]
-    table = Table(table_data, colWidths=[120, 400])
-    table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
+    # Summary
+    story.append(Paragraph("Summary", styles["Heading2"]))
+    story.append(Paragraph(summary_text.replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(PageBreak())
+
+    # Scorecard
+    story.append(Paragraph("Scorecard", styles["Heading2"]))
+    table_data = [["Category", "Parameter", "Score"]]
+    total_score = 0
+    count = 0
+    for category, params in scores.items():
+        for param, score in params.items():
+            table_data.append([category, param, score])
+            total_score += score
+            count += 1
+
+    table_data.append(["", "<b>Composite Score</b>", round(total_score / count, 2)])
+    table = Table(table_data, repeatRows=1, colWidths=[130, 250, 80])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")
+    ]))
     story.append(table)
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("Annexures", styleH))
-    for k, v in data.get("annexures", {}).items():
-        story.append(Paragraph(f"{k.replace('_',' ').title()}: {v or 'Not Available'}", styleN))
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("Scorecard", styleH))
-    score_data = [["Metric", "Score"]] + [[k, v] for k, v in data.get("scorecard", {}).items()]
-    score = Table(score_data, colWidths=[220, 80])
-    score.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
-    story.append(score)
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("Inconsistencies", styleH))
-    for i in data.get("inconsistencies", []) or ["None found"]:
-        story.append(Paragraph(f"• {i}", redStyle))
 
     doc.build(story)
-    return "memo.pdf"
+    return "investment_memo.pdf"
 
-# Streamlit UI
-st.set_page_config(page_title="Startup Memo Bot")
-st.title("📄 GPT Investment Memo Generator")
+# Streamlit App UI
+st.set_page_config(page_title="GPT Investment Memo Builder", layout="centered")
+st.title("📄 VC Memo Generator with GPT")
 
-uploaded_file = st.file_uploader("Upload pitch deck PDF", type=["pdf"])
+uploaded_file = st.file_uploader("Upload a pitch deck (PDF)", type=["pdf"])
 if st.button("Generate Memo") and uploaded_file:
-    with st.spinner("Extracting text and analyzing deck..."):
+    with st.spinner("Extracting and analyzing the pitch deck..."):
         try:
-            text = extract_text_from_pdf(uploaded_file)
-            if not text.strip():
-                st.error("❌ No text found in PDF.")
-            else:
-                st.text_area("Extracted Text", text[:3000], height=200)
-                prompt = build_prompt(text)
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are a VC analyst."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3
-                )
-                memo = json.loads(response.choices[0].message.content.strip().strip("`"))
-                pdf_path = generate_pdf(memo)
-                with open(pdf_path, "rb") as f:
-                    st.download_button("📥 Download Memo", f, file_name="startup_memo.pdf", mime="application/pdf")
+            deck_text = extract_text_from_pdf(uploaded_file)
+            prompt = build_prompt_for_summary_and_scores(deck_text)
+
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a professional venture capital analyst."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
+            )
+
+            result = json.loads(response.choices[0].message.content.strip())
+            summary_text = result["summary"]
+            scorecard = result["scorecard"]
+            pdf_path = generate_pdf(summary_text, scorecard)
+
+            st.subheader("📝 Summary")
+            st.text_area("Crisp Overview", summary_text, height=200)
+
+            with open(pdf_path, "rb") as f:
+                st.download_button("📥 Download Investment Memo", f, file_name="investment_memo.pdf", mime="application/pdf")
+
         except Exception as e:
             st.error(f"❌ Error: {e}")
