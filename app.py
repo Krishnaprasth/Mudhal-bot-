@@ -10,7 +10,7 @@ from reportlab.lib import colors
 
 # --- Setup ---
 st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
-st.title("📊 Mudhal Evaluation - VC Memo Generator")
+st.title("📊 Mudhal Evaluation - Startup Report Generator")
 
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -28,13 +28,13 @@ def extract_text_from_pdf(uploaded_file):
 # --- GPT Prompt ---
 def build_prompt(text):
     return f"""
-You are a professional VC analyst for 'Mudhal Evaluation'. Analyze the pitch deck text below.
+You are a professional startup analyst for 'Mudhal Evaluation'. Analyze the pitch deck below.
 
 Return a JSON with:
-1. "summary": A crisp one-paragraph summary on idea, founder, traction, funding, and status.
-2. "scorecard": 50 parameters grouped in 9 categories, scores 0–10 (dict of dict).
+1. "summary": A crisp one-paragraph summary (200 words) on idea, founder, traction, funding, and status.
+2. "scorecard": 50 parameters grouped in 9 categories, each scored 0–10 (dict of dicts).
 3. "ask": bullets on raise amount, round type, valuation, use of funds.
-4. "annexures": bullets on traction/revenue, financials, shareholding pattern, key customers. If data missing, say "Not Available".
+4. "annexures": bullets on traction/revenue, financials, shareholding pattern, key customers — if missing, say "Not Available".
 
 Text:
 {text}
@@ -43,12 +43,11 @@ Text:
 # --- PDF Generation ---
 def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate(f"{startup_name}_memo.pdf", pagesize=A4)
+    doc = SimpleDocTemplate(f"{startup_name}_mudhal_report.pdf", pagesize=A4)
     story = []
 
     # Header
-    story.append(Paragraph(f"<b>{startup_name} – Investment Memo</b>", styles["Title"]))
-    story.append(Paragraph("Mudhal Evaluation", styles["Heading2"]))
+    story.append(Paragraph(f"<b>{startup_name} – Mudhal Evaluation Report</b>", styles["Title"]))
     story.append(Spacer(1, 12))
 
     # Summary
@@ -82,7 +81,7 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
 
     table = Table(table_data, repeatRows=1, colWidths=[130, 260, 80])
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.darkblue),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003262")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -91,12 +90,12 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     story.append(table)
 
     doc.build(story)
-    return f"{startup_name}_memo.pdf"
+    return f"{startup_name}_mudhal_report.pdf"
 
 # --- Streamlit UI ---
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
-if st.button("🔍 Analyze and Generate Memo") and uploaded_file:
-    with st.spinner("Analyzing with GPT..."):
+if st.button("🔍 Analyze and Generate Report") and uploaded_file:
+    with st.spinner("Processing pitch deck with GPT..."):
         try:
             raw_text = extract_text_from_pdf(uploaded_file)
             prompt = build_prompt(raw_text)
@@ -104,7 +103,7 @@ if st.button("🔍 Analyze and Generate Memo") and uploaded_file:
             response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a detail-oriented VC analyst."},
+                    {"role": "system", "content": "You are a detail-oriented startup analyst."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2
@@ -119,8 +118,8 @@ if st.button("🔍 Analyze and Generate Memo") and uploaded_file:
 
             pdf_file = generate_pdf(startup_name, summary, scorecard, ask, annexures)
 
-            st.success("✅ Memo ready!")
-            st.download_button("📥 Download Investment Memo", open(pdf_file, "rb"), file_name=pdf_file)
+            st.success("✅ Mudhal Evaluation Report is ready!")
+            st.download_button("📥 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
 
             st.subheader("🔎 Summary Preview")
             st.text_area("Summary", summary, height=200)
