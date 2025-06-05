@@ -4,15 +4,14 @@ import os
 import PyPDF2
 import json
 from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib import colors
 
 openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="Startup One-Pager Generator", layout="centered")
 st.title("📄 Startup Deal Snapshot Generator")
-st.write("Upload a pitch deck or paste a founder note to generate a crisp, score-led investment memo.")
 
 uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
@@ -24,11 +23,21 @@ def extract_text_from_pdf(file):
 
 def build_prompt(text):
     return f"""
-Act like a VC analyst. Read the founder input below and return a crisp one-pager JSON with the following structure:
+Act like a VC analyst. Read the founder input below and return a structured JSON like this:
 
 {{
   "startup_name": "",
-  "one_liner": "",
+  "founder_names": [""],
+  "experience_summary": "",
+  "idea": "",
+  "product": "",
+  "traction": "",
+  "annexures": {{
+    "funding_raised": "",
+    "shareholding_pattern": "",
+    "financial_metrics": "",
+    "key_growth_metrics": ""
+  }},
   "scorecard": {{
     "Founder Experience": 0,
     "Market Size": 0,
@@ -38,93 +47,65 @@ Act like a VC analyst. Read the founder input below and return a crisp one-pager
     "Risk Level (low=better)": 0,
     "Composite Score": 0.0
   }},
-  "team": [""],
-  "product": [""],
-  "market": "",
-  "traction": [""],
-  "business_model": "",
-  "risks": [""],
-  "annexures": {{
-    "funding_raised": "",
-    "shareholding_pattern": "",
-    "financial_metrics": "",
-    "key_growth_metrics": ""
-  }},
   "inconsistencies": [""]
 }}
 
-If any section is not available, explicitly say "Not Available". Use bullet points where applicable. Return ONLY valid JSON.
+If any section is not available, clearly state "Not Available". Return only valid JSON.
 
 Founder Input:
 {text}
 """
 
-def generate_one_pager(data):
-    doc_path = "deal_snapshot_one_pager.pdf"
-    doc = SimpleDocTemplate(doc_path, pagesize=A4)
+def generate_pdf(data):
     styles = getSampleStyleSheet()
-    styleN = styles['BodyText']
-    styleH = styles['Heading4']
+    styleN = styles["BodyText"]
+    styleH = styles["Heading4"]
     redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
+    doc_path = "one_pager_summary.pdf"
+    doc = SimpleDocTemplate(doc_path, pagesize=A4)
     story = []
 
-    # Logo + Title
-    logo_path = "logo.png"
-    if os.path.exists(logo_path):
-        logo = Image(logo_path, width=120, height=40)
-        logo.hAlign = 'LEFT'
-        story.append(logo)
-
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"<b>{data.get('startup_name', 'Startup')}</b>", styles['Title']))
-    story.append(Paragraph(data.get("one_liner", ""), styleN))
-    story.append(Spacer(1, 14))
-
-    # Scorecard at the top
-    story.append(Paragraph("<b>Scorecard</b>", styleH))
-    scorecard = data.get("scorecard", {})
-    table_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
-    table = Table(table_data, hAlign='LEFT', colWidths=[220, 80])
+    # Table - Key Startup Details
+    fields = [
+        ["Company Name", data.get("startup_name", "")],
+        ["Founder(s)", ", ".join(data.get("founder_names", []))],
+        ["Experience", data.get("experience_summary", "")],
+        ["Idea", data.get("idea", "")],
+        ["Product", data.get("product", "")],
+        ["Traction", data.get("traction", "")]
+    ]
+    table = Table(fields, colWidths=[120, 380])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica')
     ]))
     story.append(table)
     story.append(Spacer(1, 12))
 
-    def bullet_section(title, items):
-        story.append(Paragraph(f"<b>{title}</b>", styleH))
-        for item in items:
-            story.append(Paragraph(f"• {item}", styleN))
-        story.append(Spacer(1, 8))
-
-    bullet_section("Team", data.get("team", []))
-    bullet_section("Product", data.get("product", []))
-    story.append(Paragraph(f"<b>Market</b>", styleH))
-    story.append(Paragraph(data.get("market", ""), styleN))
-    story.append(Spacer(1, 8))
-    bullet_section("Traction", data.get("traction", []))
-    story.append(Paragraph(f"<b>Business Model</b>", styleH))
-    story.append(Paragraph(data.get("business_model", ""), styleN))
-    story.append(Spacer(1, 8))
-    bullet_section("Risks", data.get("risks", []))
-
     # Annexures
-    annex = data.get("annexures", {})
-    story.append(Spacer(1, 10))
     story.append(Paragraph("<b>Annexures</b>", styleH))
-    for label, value in annex.items():
-        story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>", styleN))
-        story.append(Paragraph(value if value.strip() else "Not Available", styleN))
-        story.append(Spacer(1, 4))
+    for label, val in data.get("annexures", {}).items():
+        story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>: {val if val else 'Not Available'}", styleN))
+    story.append(Spacer(1, 10))
+
+    # Scorecard
+    story.append(Paragraph("<b>Scorecard</b>", styleH))
+    scorecard = data.get("scorecard", {})
+    score_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
+    score_table = Table(score_data, colWidths=[220, 80])
+    score_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(score_table)
+    story.append(Spacer(1, 10))
 
     # Inconsistencies
-    inconsistencies = data.get("inconsistencies", [])
-    story.append(Spacer(1, 10))
     story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
+    inconsistencies = data.get("inconsistencies", [])
     if inconsistencies:
         for item in inconsistencies:
             story.append(Paragraph(f"• {item}", redStyle))
@@ -135,11 +116,13 @@ def generate_one_pager(data):
     return doc_path
 
 if submit and (startup_text.strip() or uploaded_file):
-    with st.spinner("🧠 Generating one-pager with scoring and insights..."):
+    with st.spinner("Generating one-pager memo..."):
         try:
             content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
-            prompt = build_prompt(content)
+            st.markdown("### 🔍 Extracted Text Preview")
+            st.text_area("Input Sent to GPT", content[:3000], height=200)
 
+            prompt = build_prompt(content)
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -152,21 +135,20 @@ if submit and (startup_text.strip() or uploaded_file):
             raw_response = response.choices[0].message.content.strip()
             if raw_response.startswith("```"):
                 raw_response = raw_response.strip("`").strip("json").strip()
+
             try:
                 parsed = json.loads(raw_response)
             except json.JSONDecodeError:
-                st.error("⚠️ GPT response could not be parsed as JSON. Please check the content format.")
+                st.error("⚠️ GPT response is not valid JSON.")
                 st.text_area("Raw GPT Output", raw_response, height=300)
                 st.stop()
 
-            st.markdown(f"### 🧾 Preview: {parsed.get('startup_name', 'Startup')}")
-            st.markdown(parsed.get("one_liner", ""))
-
-            pdf_path = generate_one_pager(parsed)
+            st.markdown(f"### 🧾 Memo Preview: {parsed.get('startup_name', 'Startup')}")
+            pdf_path = generate_pdf(parsed)
             with open(pdf_path, "rb") as f:
                 st.download_button("📥 Download One-Pager PDF", f, file_name="deal_snapshot.pdf", mime="application/pdf")
 
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
 else:
-    st.info("Please upload a pitch deck or paste a note to generate one-pager.")
+    st.info("Please upload a PDF or paste startup note to generate the memo.")
