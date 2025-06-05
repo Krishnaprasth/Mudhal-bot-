@@ -8,10 +8,39 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-# --- Setup ---
+# --- Streamlit UI Branding ---
 st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
-st.title("📊 Mudhal Evaluation - Startup Report Generator")
 
+st.markdown(
+    """
+    <style>
+        .reportview-container {
+            background-color: #f7f9fa;
+            padding: 2rem;
+        }
+        h1 {
+            font-family: 'Segoe UI', sans-serif;
+            color: #003262;
+        }
+        .stButton>button {
+            background-color: #003262;
+            color: white;
+            border-radius: 6px;
+            padding: 0.5rem 1.5rem;
+        }
+        .stButton>button:hover {
+            background-color: #005b96;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown("## 📊 Mudhal Evaluation")
+st.markdown("**A comprehensive one-pager startup analysis report**")
+st.write("---")
+
+# --- Setup OpenAI API Key ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -25,18 +54,38 @@ def extract_text_from_pdf(uploaded_file):
             text += content + "\n"
     return text
 
-# --- GPT Prompt ---
+# --- GPT Prompt Builder ---
 def build_prompt(text):
     return f"""
-You are a professional startup analyst for 'Mudhal Evaluation'. Analyze the pitch deck below.
+You are a professional startup analyst at 'Mudhal Evaluation'.
 
-Return a JSON with:
-1. "summary": A crisp one-paragraph summary (200 words) on idea, founder, traction, funding, and status.
-2. "scorecard": 50 parameters grouped in 9 categories, each scored 0–10 (dict of dicts).
-3. "ask": bullets on raise amount, round type, valuation, use of funds.
-4. "annexures": bullets on traction/revenue, financials, shareholding pattern, key customers — if missing, say "Not Available".
+Based on the pitch deck text below, prepare a comprehensive analysis report that includes:
 
-Text:
+1. "summary": A full-page write-up covering:
+   - The startup’s core idea and problem it solves
+   - Founders' backgrounds, experience, and commitment
+   - Current business status: traction, users, revenue, customers
+   - Competitive landscape and market opportunity
+   - Any standout strengths or weaknesses from the deck
+
+2. "scorecard": A dictionary of 50 evaluation parameters grouped under categories (each parameter scored 0–10).
+
+3. "ask": Bullet points on:
+   - Amount being raised
+   - Round type (Pre-seed, Seed, Series A etc.)
+   - Intended use of funds
+   - Pre-money or post-money valuation if available
+
+4. "annexures": Bullet points on:
+   - Traction or revenue figures
+   - Financial metrics
+   - Shareholding pattern or cap table
+   - Key customers or partnerships
+   (If not found, respond with “Not Available”)
+
+Only return a valid JSON object with keys: summary, scorecard, ask, annexures.
+
+Pitch Deck Text:
 {text}
 """
 
@@ -51,9 +100,9 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     story.append(Spacer(1, 12))
 
     # Summary
-    story.append(Paragraph("📌 Summary", styles["Heading3"]))
+    story.append(Paragraph("📄 Descriptive Summary", styles["Heading3"]))
     story.append(Paragraph(summary.replace("\n", "<br/>"), styles["BodyText"]))
-    story.append(Spacer(1, 12))
+    story.append(PageBreak())
 
     # Ask
     story.append(Paragraph("💸 Ask", styles["Heading3"]))
@@ -67,7 +116,7 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
         story.append(Paragraph(f"• {ann}", styles["BodyText"]))
     story.append(PageBreak())
 
-    # Scorecard Table
+    # Scorecard
     story.append(Paragraph("📊 Scorecard", styles["Heading2"]))
     table_data = [["Category", "Parameter", "Score"]]
     total_score = 0
@@ -92,10 +141,10 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     doc.build(story)
     return f"{startup_name}_mudhal_report.pdf"
 
-# --- Streamlit UI ---
+# --- Streamlit App Flow ---
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
-if st.button("🔍 Analyze and Generate Report") and uploaded_file:
-    with st.spinner("Processing pitch deck with GPT..."):
+if st.button("📥 Generate Full Report") and uploaded_file:
+    with st.spinner("Analyzing pitch deck with GPT..."):
         try:
             raw_text = extract_text_from_pdf(uploaded_file)
             prompt = build_prompt(raw_text)
@@ -119,10 +168,10 @@ if st.button("🔍 Analyze and Generate Report") and uploaded_file:
             pdf_file = generate_pdf(startup_name, summary, scorecard, ask, annexures)
 
             st.success("✅ Mudhal Evaluation Report is ready!")
-            st.download_button("📥 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
+            st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
 
-            st.subheader("🔎 Summary Preview")
-            st.text_area("Summary", summary, height=200)
+            st.subheader("📌 Summary Preview")
+            st.text_area("Summary", summary, height=400)
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
