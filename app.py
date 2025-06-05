@@ -1,12 +1,14 @@
 import streamlit as st
 import os
-import fitz  # PyMuPDF
 import json
+import tempfile
+import pytesseract
+from pdf2image import convert_from_bytes
+from openai import OpenAI
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from openai import OpenAI
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY"))
 
@@ -17,9 +19,10 @@ uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
 submit = st.button("🚀 Generate One-Pager")
 
-def extract_text_from_pdf(file):
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        return "\n".join([page.get_text() for page in doc])
+def extract_text_with_ocr(file):
+    images = convert_from_bytes(file.read())
+    extracted_text = "\n".join([pytesseract.image_to_string(img) for img in images])
+    return extracted_text
 
 def build_prompt(text):
     return f"""
@@ -65,7 +68,6 @@ def generate_pdf(data):
     doc = SimpleDocTemplate(doc_path, pagesize=A4)
     story = []
 
-    # Table - Key Startup Details
     fields = [
         ["Company Name", data.get("startup_name", "")],
         ["Founder(s)", ", ".join(data.get("founder_names", []))],
@@ -84,13 +86,11 @@ def generate_pdf(data):
     story.append(table)
     story.append(Spacer(1, 12))
 
-    # Annexures
     story.append(Paragraph("<b>Annexures</b>", styleH))
     for label, val in data.get("annexures", {}).items():
         story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>: {val if val else 'Not Available'}", styleN))
     story.append(Spacer(1, 10))
 
-    # Scorecard
     story.append(Paragraph("<b>Scorecard</b>", styleH))
     scorecard = data.get("scorecard", {})
     score_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
@@ -103,7 +103,6 @@ def generate_pdf(data):
     story.append(score_table)
     story.append(Spacer(1, 10))
 
-    # Inconsistencies
     story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
     inconsistencies = data.get("inconsistencies", [])
     if inconsistencies:
@@ -118,7 +117,7 @@ def generate_pdf(data):
 if submit and (startup_text.strip() or uploaded_file):
     with st.spinner("Generating one-pager memo..."):
         try:
-            content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
+            content = extract_text_with_ocr(uploaded_file) if uploaded_file else startup_text.strip()
             st.markdown("### 🔍 Extracted Text Preview")
             st.text_area("Input Sent to GPT", content[:3000], height=200)
 
