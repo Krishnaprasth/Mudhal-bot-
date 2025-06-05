@@ -1,32 +1,29 @@
 import streamlit as st
-import requests
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
 import json
-import os
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import os
 
-# Load API keys
-OCR_API_KEY = st.secrets.get("OCR_API_KEY", os.getenv("OCR_API_KEY"))
+# Optional: Set path to tesseract binary (Windows users only)
+# pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# OCR using OCR.Space
-def extract_text_via_ocr_space(file):
-    url = "https://api.ocr.space/parse/image"
-    result = requests.post(
-        url,
-        files={"file": file},
-        data={"apikey": OCR_API_KEY, "language": "eng", "isOverlayRequired": False}
-    )
-    result.raise_for_status()
-    data = result.json()
-    parsed_text = "\n".join([r["ParsedText"] for r in data.get("ParsedResults", [])])
-    return parsed_text
+def extract_text_tesseract(uploaded_file):
+    pages = convert_from_bytes(uploaded_file.read())
+    full_text = ""
+    for page in pages:
+        text = pytesseract.image_to_string(page)
+        full_text += text + "\n"
+    return full_text
 
-# GPT prompt
 def build_prompt(text):
     return f"""Act like a VC analyst. Read the input below and return JSON:
 {{
@@ -53,11 +50,9 @@ def build_prompt(text):
   }},
   "inconsistencies": [""]
 }}
-If any section is not available, say "Not Available". Only output valid JSON.
-Input:
+Only output valid JSON. Input:
 {text}"""
 
-# Generate PDF memo
 def generate_pdf(data):
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate("memo.pdf", pagesize=A4)
@@ -102,18 +97,18 @@ def generate_pdf(data):
     return "memo.pdf"
 
 # Streamlit UI
-st.set_page_config(page_title="Startup Memo Bot with OCR")
-st.title("📄 GPT Investment Memo Generator (with OCR)")
+st.set_page_config(page_title="Startup Memo Bot (Tesseract OCR)")
+st.title("📄 GPT Investment Memo Generator (Local OCR)")
 
 uploaded_file = st.file_uploader("Upload scanned pitch deck (PDF)", type=["pdf"])
 if st.button("Generate Memo") and uploaded_file:
     with st.spinner("Extracting text and analyzing deck..."):
         try:
-            text = extract_text_via_ocr_space(uploaded_file)
+            text = extract_text_tesseract(uploaded_file)
             if not text.strip():
-                st.error("❌ No text could be extracted via OCR.")
+                st.error("❌ No text extracted via OCR.")
             else:
-                st.text_area("Extracted Text", text[:2000], height=200)
+                st.text_area("Extracted Text", text[:3000], height=200)
                 prompt = build_prompt(text)
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
