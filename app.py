@@ -4,140 +4,138 @@ import os
 import PyPDF2
 import json
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib import colors
 
-# Set OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
 
-st.set_page_config(page_title="Startup Investment Memo Generator", layout="centered")
-st.title("📄 Structured Investment Memo Generator")
-st.write("Upload a pitch deck or paste a founder note to generate a clean, structured investment memo PDF.")
+st.set_page_config(page_title="Startup One-Pager Generator", layout="centered")
+st.title("📄 Startup Deal Snapshot Generator")
+st.write("Upload a pitch deck or paste a founder note to generate a one-pager investment summary PDF.")
 
 uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
-submit = st.button("🚀 Generate Memo")
+submit = st.button("🚀 Generate One-Pager")
 
-# Extract text from uploaded PDF
 def extract_text_from_pdf(file):
     pdf = PyPDF2.PdfReader(file)
     return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-# Clean unsupported characters
-def clean_text(text):
-    replacements = {
-        '\u2018': "'", '\u2019': "'",
-        '\u201c': '"', '\u201d': '"',
-        '\u2013': '-', '\u2014': '-',
-        '\u2022': '*', '\u00a0': ' ',
-        '\u2192': '->', '\u2026': '...',
-        '\u2122': '(TM)', '\u00b7': '-', '\u00e9': 'e'
-    }
-    for orig, repl in replacements.items():
-        text = text.replace(orig, repl)
-    return text
-
-# Build structured GPT prompt
 def build_prompt(text):
     return f"""
-You are a venture capital analyst. Based on the startup information below, write an investment memo in structured JSON format with the following keys:
+Act like a VC analyst. Read the founder input below and return a concise one-pager JSON with the following structure:
 
 {{
-  "executive_summary": "",
-  "team": {{
-    "overview": "",
-    "founder_experience": "",
-    "time_on_idea": ""
-  }},
-  "product": "",
+  "startup_name": "",
+  "one_liner": "",
+  "team": [""],
+  "product": [""],
   "market": "",
-  "traction": {{
-    "users": "",
-    "revenue": "",
-    "growth_metrics": ""
-  }},
+  "traction": [""],
   "business_model": "",
-  "profitability": "",
-  "go_to_market": "",
-  "risks": "",
-  "investment_recommendation": "",
+  "risks": [""],
   "scorecard": {{
     "Founder Experience": 0,
-    "Time Spent on Idea": 0,
-    "Product Quality": 0,
     "Market Size": 0,
-    "Traction (Revenue/Users)": 0,
-    "Business Model Clarity": 0,
-    "Profitability Potential": 0,
-    "Go-to-Market Strategy": 0,
-    "Risk Level (lower is better)": 0,
+    "Traction": 0,
+    "Product Clarity": 0,
+    "Revenue Potential": 0,
+    "Risk Level (low=better)": 0,
     "Composite Score": 0.0
-  }}
+  }},
+  "annexures": {{
+    "funding_raised": "",
+    "shareholding_pattern": "",
+    "financial_metrics": "",
+    "key_growth_metrics": ""
+  }},
+  "inconsistencies": [""]
 }}
 
-Only return valid JSON. Use the following startup description to populate the memo:
+If any section is not available, explicitly say "Not Available". Use bullet points where applicable. Return ONLY valid JSON.
 
+Founder Input:
 {text}
 """
 
-# Generate formatted PDF using reportlab
-def generate_pdf(data):
-    doc_path = "structured_memo_output.pdf"
+def generate_one_pager(data):
+    doc_path = "deal_snapshot_one_pager.pdf"
     doc = SimpleDocTemplate(doc_path, pagesize=A4)
     styles = getSampleStyleSheet()
+    styleN = styles['BodyText']
+    styleH = styles['Heading4']
     story = []
 
-    def section(title, body):
-        story.append(Paragraph(f"<b>{title}</b>", styles['Heading4']))
-        story.append(Paragraph(clean_text(body), styles['BodyText']))
-        story.append(Spacer(1, 12))
+    # Add logo if available
+    logo_path = "logo.png"
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=120, height=40)
+        logo.hAlign = 'LEFT'
+        story.append(logo)
 
-    # Add each structured section
-    section("Executive Summary", data.get("executive_summary", ""))
+    # Title
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"<b>{data.get('startup_name', 'Startup')}</b>", styles['Title']))
+    story.append(Paragraph(data.get("one_liner", ""), styleN))
+    story.append(Spacer(1, 12))
 
-    team = data.get("team", {})
-    section("Team Overview", team.get("overview", ""))
-    section("Founder Experience", team.get("founder_experience", ""))
-    section("Time on Idea", team.get("time_on_idea", ""))
+    def bullet_section(title, items):
+        story.append(Paragraph(f"<b>{title}</b>", styleH))
+        for item in items:
+            story.append(Paragraph(f"• {item}", styleN))
+        story.append(Spacer(1, 8))
 
-    section("Product", data.get("product", ""))
-    section("Market", data.get("market", ""))
-
-    traction = data.get("traction", {})
-    section("Traction - Users", traction.get("users", ""))
-    section("Traction - Revenue", traction.get("revenue", ""))
-    section("Growth Metrics", traction.get("growth_metrics", ""))
-
-    section("Business Model", data.get("business_model", ""))
-    section("Profitability", data.get("profitability", ""))
-    section("Go-to-Market Strategy", data.get("go_to_market", ""))
-    section("Risks & Concerns", data.get("risks", ""))
-    section("Investment Recommendation", data.get("investment_recommendation", ""))
+    bullet_section("Team", data.get("team", []))
+    bullet_section("Product", data.get("product", []))
+    story.append(Paragraph(f"<b>Market</b>", styleH))
+    story.append(Paragraph(data.get("market", ""), styleN))
+    story.append(Spacer(1, 8))
+    bullet_section("Traction", data.get("traction", []))
+    story.append(Paragraph(f"<b>Business Model</b>", styleH))
+    story.append(Paragraph(data.get("business_model", ""), styleN))
+    story.append(Spacer(1, 8))
+    bullet_section("Risks", data.get("risks", []))
 
     # Scorecard table
     scorecard = data.get("scorecard", {})
-    table_data = [["Metric", "Score"]]
-    for k, v in scorecard.items():
-        table_data.append([k, str(v)])
-
-    table = Table(table_data, hAlign='LEFT')
+    table_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
+    table = Table(table_data, hAlign='LEFT', colWidths=[200, 80])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
     ]))
     story.append(Spacer(1, 12))
-    story.append(Paragraph("<b>Scorecard</b>", styles['Heading4']))
+    story.append(Paragraph("<b>Scorecard</b>", styleH))
     story.append(table)
+
+    # Annexures
+    annex = data.get("annexures", {})
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("<b>Annexures</b>", styleH))
+    for label, value in annex.items():
+        story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>", styleN))
+        story.append(Paragraph(value if value.strip() else "Not Available", styleN))
+        story.append(Spacer(1, 6))
+
+    # Inconsistencies
+    inconsistencies = data.get("inconsistencies", [])
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
+    if inconsistencies:
+        for item in inconsistencies:
+            story.append(Paragraph(f"• {item}", styleN))
+    else:
+        story.append(Paragraph("None Identified or Not Available", styleN))
 
     doc.build(story)
     return doc_path
 
-# Streamlit app logic
 if submit and (startup_text.strip() or uploaded_file):
-    with st.spinner("🧠 Generating structured memo..."):
+    with st.spinner("🧠 Generating one-pager with annexures and inconsistencies..."):
         try:
             content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
             prompt = build_prompt(content)
@@ -145,23 +143,21 @@ if submit and (startup_text.strip() or uploaded_file):
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a VC analyst writing a professional investment memo."},
+                    {"role": "system", "content": "You are a VC associate."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
             )
 
-            raw_output = response.choices[0].message.content.strip()
-            parsed = json.loads(raw_output)
+            parsed = json.loads(response.choices[0].message.content.strip())
+            st.markdown(f"### 🧾 Preview: {parsed.get('startup_name', 'Startup')}")
+            st.markdown(parsed.get("one_liner", ""))
 
-            st.markdown("### 🧾 Preview: Executive Summary")
-            st.text(parsed.get("executive_summary", "[No summary returned]"))
-
-            pdf_path = generate_pdf(parsed)
+            pdf_path = generate_one_pager(parsed)
             with open(pdf_path, "rb") as f:
-                st.download_button("📥 Download Structured Memo as PDF", f, file_name="investment_memo.pdf", mime="application/pdf")
+                st.download_button("📥 Download One-Pager PDF", f, file_name="deal_snapshot.pdf", mime="application/pdf")
 
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
 else:
-    st.info("Please upload a pitch deck or paste a note to generate memo.")
+    st.info("Please upload a pitch deck or paste a note to generate one-pager.")
