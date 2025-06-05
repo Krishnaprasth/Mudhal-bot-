@@ -65,6 +65,7 @@ def generate_one_pager(data):
     styles = getSampleStyleSheet()
     styleN = styles['BodyText']
     styleH = styles['Heading4']
+    redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
     story = []
 
     # Add logo if available
@@ -127,7 +128,7 @@ def generate_one_pager(data):
     story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
     if inconsistencies:
         for item in inconsistencies:
-            story.append(Paragraph(f"• {item}", styleN))
+            story.append(Paragraph(f"• {item}", redStyle))
     else:
         story.append(Paragraph("None Identified or Not Available", styleN))
 
