@@ -1,5 +1,4 @@
 import streamlit as st
-import openai
 import os
 import fitz  # PyMuPDF
 import json
@@ -7,8 +6,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from openai import OpenAI
 
-openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY"))
 
 st.set_page_config(page_title="Startup One-Pager Generator", layout="centered")
 st.title("📄 Startup Deal Snapshot Generator")
@@ -123,10 +123,10 @@ if submit and (startup_text.strip() or uploaded_file):
             st.text_area("Input Sent to GPT", content[:3000], height=200)
 
             prompt = build_prompt(content)
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a VC associate."},
+                    {"role": "system", "content": "You are a VC analyst."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
