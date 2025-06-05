@@ -1,34 +1,30 @@
+# Streamlit app: GPT-powered Investment Memo Generator using PyMuPDF (no OCR API)
+
 import streamlit as st
-import os
-import json
 import fitz  # PyMuPDF
+import json
+import os
 from openai import OpenAI
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY"))
+# Load API key
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-st.set_page_config(page_title="Startup One-Pager Generator", layout="centered")
-st.title("📄 Startup Deal Snapshot Generator")
-
-uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
-startup_text = st.text_area("Or paste founder note / call summary", height=250)
-submit = st.button("🚀 Generate One-Pager")
-
+# Extract text from PDF using PyMuPDF
 def extract_text_from_pdf(file):
-    try:
-        with fitz.open(stream=file.read(), filetype="pdf") as doc:
-            text = "\n".join([page.get_text() for page in doc])
-        return text.strip()
-    except Exception:
-        return ""
+    text = ""
+    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
 
+# Build GPT prompt
 def build_prompt(text):
-    return f"""
-Act like a VC analyst. Read the founder input below and return a structured JSON like this:
-
+    return f"""Act like a VC analyst. Read the input below and return JSON:
 {{
   "startup_name": "",
   "founder_names": [""],
@@ -53,106 +49,79 @@ Act like a VC analyst. Read the founder input below and return a structured JSON
   }},
   "inconsistencies": [""]
 }}
+If any section is not available, say "Not Available". Only output valid JSON.
+Input:
+{text}"""
 
-If any section is not available, clearly state "Not Available". Return only valid JSON.
-
-Founder Input:
-{text}
-"""
-
+# Generate memo PDF
 def generate_pdf(data):
     styles = getSampleStyleSheet()
-    styleN = styles["BodyText"]
-    styleH = styles["Heading4"]
-    redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
-    doc_path = "one_pager_summary.pdf"
-    doc = SimpleDocTemplate(doc_path, pagesize=A4)
+    doc = SimpleDocTemplate("memo.pdf", pagesize=A4)
     story = []
+    styleN, styleH = styles["BodyText"], styles["Heading4"]
+    redStyle = ParagraphStyle(name='RedText', parent=styleN, textColor=colors.red)
 
-    fields = [
-        ["Company Name", data.get("startup_name", "")],
-        ["Founder(s)", ", ".join(data.get("founder_names", []))],
+    company_name = data.get("startup_name", "Startup")
+    story.append(Paragraph(f"<b>{company_name} - Investment Memo</b>", styles["Title"]))
+    story.append(Spacer(1, 12))
+
+    table_data = [
+        ["Company Name", company_name],
+        ["Founders", ", ".join(data.get("founder_names", []))],
         ["Experience", data.get("experience_summary", "")],
         ["Idea", data.get("idea", "")],
         ["Product", data.get("product", "")],
         ["Traction", data.get("traction", "")]
     ]
-    table = Table(fields, colWidths=[120, 380])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica')
-    ]))
+    table = Table(table_data, colWidths=[120, 400])
+    table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
     story.append(table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("<b>Annexures</b>", styleH))
-    for label, val in data.get("annexures", {}).items():
-        story.append(Paragraph(f"<b>{label.replace('_', ' ').title()}</b>: {val if val else 'Not Available'}", styleN))
+    story.append(Paragraph("Annexures", styleH))
+    for k, v in data.get("annexures", {}).items():
+        story.append(Paragraph(f"{k.replace('_',' ').title()}: {v or 'Not Available'}", styleN))
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("<b>Scorecard</b>", styleH))
-    scorecard = data.get("scorecard", {})
-    score_data = [["Metric", "Score"]] + [[k, str(v)] for k, v in scorecard.items()]
-    score_table = Table(score_data, colWidths=[220, 80])
-    score_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
-    ]))
-    story.append(score_table)
+    story.append(Paragraph("Scorecard", styleH))
+    score_data = [["Metric", "Score"]] + [[k, v] for k, v in data.get("scorecard", {}).items()]
+    score = Table(score_data, colWidths=[220, 80])
+    score.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
+    story.append(score)
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("<b>Inconsistencies Identified</b>", styleH))
-    inconsistencies = data.get("inconsistencies", [])
-    if inconsistencies:
-        for item in inconsistencies:
-            story.append(Paragraph(f"• {item}", redStyle))
-    else:
-        story.append(Paragraph("None Identified or Not Available", styleN))
+    story.append(Paragraph("Inconsistencies", styleH))
+    for i in data.get("inconsistencies", []) or ["None found"]:
+        story.append(Paragraph(f"• {i}", redStyle))
 
     doc.build(story)
-    return doc_path
+    return "memo.pdf"
 
-if submit and (startup_text.strip() or uploaded_file):
-    with st.spinner("Generating one-pager memo..."):
+# Streamlit UI
+st.set_page_config(page_title="Startup Memo Bot (No OCR)")
+st.title("📄 GPT Investment Memo Generator (Text PDFs Only)")
+
+uploaded_file = st.file_uploader("Upload text-based pitch deck (PDF)", type=["pdf"])
+if st.button("Generate Memo") and uploaded_file:
+    with st.spinner("Extracting text and analyzing deck..."):
         try:
-            content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
-            if not content.strip():
-                st.error("❌ No readable text found in the PDF. Try uploading a different version or paste manually.")
-                st.stop()
-
-            st.markdown("### 🔍 Extracted Text Preview")
-            st.text_area("Input Sent to GPT", content[:3000], height=200)
-
-            prompt = build_prompt(content)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a VC analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-
-            raw_response = response.choices[0].message.content.strip()
-            if raw_response.startswith("```"):
-                raw_response = raw_response.strip("`").strip("json").strip()
-
-            try:
-                parsed = json.loads(raw_response)
-            except json.JSONDecodeError:
-                st.error("⚠️ GPT response is not valid JSON.")
-                st.text_area("Raw GPT Output", raw_response, height=300)
-                st.stop()
-
-            st.markdown(f"### 🧾 Memo Preview: {parsed.get('startup_name', 'Startup')}")
-            pdf_path = generate_pdf(parsed)
-            with open(pdf_path, "rb") as f:
-                st.download_button("📥 Download One-Pager PDF", f, file_name="deal_snapshot.pdf", mime="application/pdf")
-
+            text = extract_text_from_pdf(uploaded_file)
+            if not text.strip():
+                st.error("❌ No extractable text found. Please upload a text-based PDF.")
+            else:
+                st.text_area("Extracted Text", text[:2000], height=200)
+                prompt = build_prompt(text)
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a VC analyst."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3
+                )
+                memo = json.loads(response.choices[0].message.content.strip().strip("`"))
+                pdf_path = generate_pdf(memo)
+                with open(pdf_path, "rb") as f:
+                    st.download_button("📥 Download Memo", f, file_name="startup_memo.pdf", mime="application/pdf")
         except Exception as e:
-            st.error(f"⚠️ Error: {e}")
-else:
-    st.info("Please upload a PDF or paste startup note to generate the memo.")
+            st.error(f"❌ Error: {e}")
