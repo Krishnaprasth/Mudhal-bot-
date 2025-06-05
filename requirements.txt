@@ -1,7 +1,8 @@
 streamlit
 openai
-requests
 reportlab
+PyPDF2
+
 
 
 
