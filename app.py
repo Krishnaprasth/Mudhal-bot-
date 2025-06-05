@@ -8,7 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-# --- Streamlit UI Branding ---
+# --- UI and Branding ---
 st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
 
 st.markdown(
@@ -36,9 +36,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown("## 📊 Mudhal Evaluation")
-st.markdown("**A comprehensive one-pager startup analysis report**")
-st.write("---")
+st.title("📊 Mudhal Evaluation")
+st.markdown("Upload a pitch deck to generate a one-page investment analysis.")
 
 # --- OpenAI API ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -89,29 +88,34 @@ Pitch Deck Text:
 {text}
 """
 
-# --- PDF Generator ---
+# --- PDF Report Generator ---
 def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(f"{startup_name}_mudhal_report.pdf", pagesize=A4)
     story = []
 
+    # Heading
     story.append(Paragraph(f"<b>{startup_name} – Mudhal Evaluation Report</b>", styles["Title"]))
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("📄 Descriptive Summary", styles["Heading3"]))
+    # Summary
+    story.append(Paragraph("📄 Summary", styles["Heading2"]))
     story.append(Paragraph(summary.replace("\n", "<br/>"), styles["BodyText"]))
     story.append(PageBreak())
 
-    story.append(Paragraph("💸 Ask", styles["Heading3"]))
+    # Ask
+    story.append(Paragraph("💸 Ask", styles["Heading2"]))
     for bullet in ask:
         story.append(Paragraph(f"• {bullet}", styles["BodyText"]))
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("📎 Annexures", styles["Heading3"]))
+    # Annexures
+    story.append(Paragraph("📎 Annexures", styles["Heading2"]))
     for ann in annexures:
         story.append(Paragraph(f"• {ann}", styles["BodyText"]))
     story.append(PageBreak())
 
+    # Scorecard
     story.append(Paragraph("📊 Scorecard", styles["Heading2"]))
     table_data = [["Category", "Parameter", "Score"]]
     total_score = 0
@@ -140,8 +144,9 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     doc.build(story)
     return f"{startup_name}_mudhal_report.pdf"
 
-# --- Streamlit UI Logic ---
+# --- Main App Logic ---
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
+
 if st.button("📥 Generate Full Report") and uploaded_file:
     with st.spinner("Analyzing pitch deck with GPT..."):
         try:
@@ -158,10 +163,10 @@ if st.button("📥 Generate Full Report") and uploaded_file:
             )
 
             result = json.loads(response.choices[0].message.content.strip())
-            summary = result["summary"]
-            scorecard = result["scorecard"]
-            ask = result["ask"]
-            annexures = result["annexures"]
+            summary = result.get("summary", "")
+            scorecard = result.get("scorecard", {})
+            ask = result.get("ask", [])
+            annexures = result.get("annexures", [])
             startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
 
             pdf_file = generate_pdf(startup_name, summary, scorecard, ask, annexures)
