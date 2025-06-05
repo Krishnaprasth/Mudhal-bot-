@@ -1,7 +1,4 @@
 import streamlit as st
-import pytesseract
-from pdf2image import convert_from_bytes
-from PIL import Image
 import json
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -10,19 +7,8 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import os
 
-# Optional: Set path to tesseract binary (Windows users only)
-# pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
-
-def extract_text_tesseract(uploaded_file):
-    pages = convert_from_bytes(uploaded_file.read())
-    full_text = ""
-    for page in pages:
-        text = pytesseract.image_to_string(page)
-        full_text += text + "\n"
-    return full_text
 
 def build_prompt(text):
     return f"""Act like a VC analyst. Read the input below and return JSON:
@@ -97,18 +83,18 @@ def generate_pdf(data):
     return "memo.pdf"
 
 # Streamlit UI
-st.set_page_config(page_title="Startup Memo Bot (Tesseract OCR)")
-st.title("📄 GPT Investment Memo Generator (Local OCR)")
+st.set_page_config(page_title="Startup Memo Bot")
+st.title("📄 GPT Investment Memo Generator")
 
-uploaded_file = st.file_uploader("Upload scanned pitch deck (PDF)", type=["pdf"])
+uploaded_file = st.file_uploader("Upload pitch deck text file", type=["txt"])
 if st.button("Generate Memo") and uploaded_file:
-    with st.spinner("Extracting text and analyzing deck..."):
+    with st.spinner("Analyzing deck text..."):
         try:
-            text = extract_text_tesseract(uploaded_file)
+            text = uploaded_file.read().decode("utf-8")
             if not text.strip():
-                st.error("❌ No text extracted via OCR.")
+                st.error("❌ No text found in file.")
             else:
-                st.text_area("Extracted Text", text[:3000], height=200)
+                st.text_area("Input Text", text[:3000], height=200)
                 prompt = build_prompt(text)
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
