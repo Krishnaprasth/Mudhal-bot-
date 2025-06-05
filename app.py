@@ -1,177 +1,129 @@
 import streamlit as st
 import PyPDF2
-import json
 import os
+import json
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-# Load API key
+# --- Setup ---
+st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
+st.title("📊 Mudhal Evaluation - VC Memo Generator")
+
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# --- Extract text from PDF ---
 def extract_text_from_pdf(uploaded_file):
     reader = PyPDF2.PdfReader(uploaded_file)
-    full_text = ""
+    text = ""
     for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            full_text += text + "\n"
-    return full_text
+        content = page.extract_text()
+        if content:
+            text += content + "\n"
+    return text
 
-def build_prompt_for_summary_and_scores(text):
+# --- GPT Prompt ---
+def build_prompt(text):
     return f"""
-You are a venture analyst. Based on the pitch deck text below, return a JSON object with:
+You are a professional VC analyst for 'Mudhal Evaluation'. Analyze the pitch deck text below.
 
-1. "summary": A crisp half-page summary (max 200 words) on the startup idea, founders, current status, traction, funding, and key facts.
-2. "scorecard": A nested dictionary with the following structure:
-{{
-  "Founders & Team (20%)": {{
-    "Founder relevant experience": 0,
-    "Founder full-time": 0,
-    "Team complementarity": 0,
-    "Past startup/domain experience": 0,
-    "Team size": 0,
-    "Key hires": 0,
-    "Cap table sanity": 0,
-    "Founder insight": 0,
-    "Motivation/resilience": 0,
-    "Execution bias": 0
-  }},
-  "Problem-Solution Fit (10%)": {{
-    "Problem clarity": 0,
-    "Pain severity": 0,
-    "Solution uniqueness": 0,
-    "Must-have need": 0,
-    "Simplicity": 0
-  }},
-  "Product & Tech (10%)": {{
-    "Product clarity": 0,
-    "Working MVP": 0,
-    "Tech moat": 0,
-    "Scalability": 0,
-    "Defensibility": 0
-  }},
-  "Market & Timing (10%)": {{
-    "TAM size": 0,
-    "Market growth": 0,
-    "Timing fit": 0,
-    "Customer urgency": 0,
-    "Competition": 0
-  }},
-  "Traction (15%)": {{
-    "Revenue run rate": 0,
-    "Growth rate": 0,
-    "User/customer base": 0,
-    "Retention": 0,
-    "CAC": 0,
-    "LTV": 0,
-    "Gross margins": 0,
-    "Customer proof": 0
-  }},
-  "Business Model (10%)": {{
-    "Revenue model": 0,
-    "Pricing power": 0,
-    "Path to profitability": 0,
-    "Monetization": 0,
-    "Gross margin potential": 0
-  }},
-  "Financials (10%)": {{
-    "Cash runway": 0,
-    "Burn rate": 0,
-    "Unit economics": 0,
-    "Use of funds": 0,
-    "Capital efficiency": 0
-  }},
-  "Go-to-Market (5%)": {{
-    "Acquisition channels": 0,
-    "Sales strategy": 0,
-    "Distribution partnerships": 0
-  }},
-  "Risk (5%)": {{
-    "Regulatory": 0,
-    "Founder dependence": 0,
-    "Competition risk": 0,
-    "Legal/IP risk": 0,
-    "Data inconsistency": 0
-  }}
-}}
+Return a JSON with:
+1. "summary": A crisp one-paragraph summary on idea, founder, traction, funding, and status.
+2. "scorecard": 50 parameters grouped in 9 categories, scores 0–10 (dict of dict).
+3. "ask": bullets on raise amount, round type, valuation, use of funds.
+4. "annexures": bullets on traction/revenue, financials, shareholding pattern, key customers. If data missing, say "Not Available".
 
-Each parameter must be scored 0–10. Output valid JSON only.
-Input:
+Text:
 {text}
 """
 
-def generate_pdf(summary_text, scores):
+# --- PDF Generation ---
+def generate_pdf(startup_name, summary, scorecard, ask, annexures):
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate("investment_memo.pdf", pagesize=A4)
+    doc = SimpleDocTemplate(f"{startup_name}_memo.pdf", pagesize=A4)
     story = []
 
-    # Title
-    story.append(Paragraph("🚀 Investment Memo", styles["Title"]))
+    # Header
+    story.append(Paragraph(f"<b>{startup_name} – Investment Memo</b>", styles["Title"]))
+    story.append(Paragraph("Mudhal Evaluation", styles["Heading2"]))
     story.append(Spacer(1, 12))
 
     # Summary
-    story.append(Paragraph("Summary", styles["Heading2"]))
-    story.append(Paragraph(summary_text.replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Paragraph("📌 Summary", styles["Heading3"]))
+    story.append(Paragraph(summary.replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 12))
+
+    # Ask
+    story.append(Paragraph("💸 Ask", styles["Heading3"]))
+    for bullet in ask:
+        story.append(Paragraph(f"• {bullet}", styles["BodyText"]))
+    story.append(Spacer(1, 12))
+
+    # Annexures
+    story.append(Paragraph("📎 Annexures", styles["Heading3"]))
+    for ann in annexures:
+        story.append(Paragraph(f"• {ann}", styles["BodyText"]))
     story.append(PageBreak())
 
-    # Scorecard
-    story.append(Paragraph("Scorecard", styles["Heading2"]))
+    # Scorecard Table
+    story.append(Paragraph("📊 Scorecard", styles["Heading2"]))
     table_data = [["Category", "Parameter", "Score"]]
     total_score = 0
     count = 0
-    for category, params in scores.items():
-        for param, score in params.items():
-            table_data.append([category, param, score])
+    for cat, items in scorecard.items():
+        for param, score in items.items():
+            table_data.append([cat, param, score])
             total_score += score
             count += 1
+    table_data.append(["", "Composite Score", round(total_score / count, 2)])
 
-    table_data.append(["", "<b>Composite Score</b>", round(total_score / count, 2)])
-    table = Table(table_data, repeatRows=1, colWidths=[130, 250, 80])
+    table = Table(table_data, repeatRows=1, colWidths=[130, 260, 80])
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.darkblue),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (2, 1), (2, -1), "CENTER"),
     ]))
     story.append(table)
 
     doc.build(story)
-    return "investment_memo.pdf"
+    return f"{startup_name}_memo.pdf"
 
-# Streamlit App UI
-st.set_page_config(page_title="GPT Investment Memo Builder", layout="centered")
-st.title("📄 VC Memo Generator with GPT")
-
-uploaded_file = st.file_uploader("Upload a pitch deck (PDF)", type=["pdf"])
-if st.button("Generate Memo") and uploaded_file:
-    with st.spinner("Extracting and analyzing the pitch deck..."):
+# --- Streamlit UI ---
+uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
+if st.button("🔍 Analyze and Generate Memo") and uploaded_file:
+    with st.spinner("Analyzing with GPT..."):
         try:
-            deck_text = extract_text_from_pdf(uploaded_file)
-            prompt = build_prompt_for_summary_and_scores(deck_text)
+            raw_text = extract_text_from_pdf(uploaded_file)
+            prompt = build_prompt(raw_text)
 
             response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a professional venture capital analyst."},
+                    {"role": "system", "content": "You are a detail-oriented VC analyst."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                temperature=0.2
             )
 
             result = json.loads(response.choices[0].message.content.strip())
-            summary_text = result["summary"]
+            summary = result["summary"]
             scorecard = result["scorecard"]
-            pdf_path = generate_pdf(summary_text, scorecard)
+            ask = result["ask"]
+            annexures = result["annexures"]
+            startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
 
-            st.subheader("📝 Summary")
-            st.text_area("Crisp Overview", summary_text, height=200)
+            pdf_file = generate_pdf(startup_name, summary, scorecard, ask, annexures)
 
-            with open(pdf_path, "rb") as f:
-                st.download_button("📥 Download Investment Memo", f, file_name="investment_memo.pdf", mime="application/pdf")
+            st.success("✅ Memo ready!")
+            st.download_button("📥 Download Investment Memo", open(pdf_file, "rb"), file_name=pdf_file)
+
+            st.subheader("🔎 Summary Preview")
+            st.text_area("Summary", summary, height=200)
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
