@@ -1,7 +1,5 @@
-# Streamlit app: GPT-powered Investment Memo Generator using PyMuPDF (no OCR API)
-
 import streamlit as st
-import fitz  # PyMuPDF
+import requests
 import json
 import os
 from openai import OpenAI
@@ -10,19 +8,25 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-# Load API key
+# Load API keys
+OCR_API_KEY = st.secrets.get("OCR_API_KEY", os.getenv("OCR_API_KEY"))
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Extract text from PDF using PyMuPDF
-def extract_text_from_pdf(file):
-    text = ""
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
+# OCR using OCR.Space
+def extract_text_via_ocr_space(file):
+    url = "https://api.ocr.space/parse/image"
+    result = requests.post(
+        url,
+        files={"file": file},
+        data={"apikey": OCR_API_KEY, "language": "eng", "isOverlayRequired": False}
+    )
+    result.raise_for_status()
+    data = result.json()
+    parsed_text = "\n".join([r["ParsedText"] for r in data.get("ParsedResults", [])])
+    return parsed_text
 
-# Build GPT prompt
+# GPT prompt
 def build_prompt(text):
     return f"""Act like a VC analyst. Read the input below and return JSON:
 {{
@@ -53,7 +57,7 @@ If any section is not available, say "Not Available". Only output valid JSON.
 Input:
 {text}"""
 
-# Generate memo PDF
+# Generate PDF memo
 def generate_pdf(data):
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate("memo.pdf", pagesize=A4)
@@ -98,16 +102,16 @@ def generate_pdf(data):
     return "memo.pdf"
 
 # Streamlit UI
-st.set_page_config(page_title="Startup Memo Bot (No OCR)")
-st.title("📄 GPT Investment Memo Generator (Text PDFs Only)")
+st.set_page_config(page_title="Startup Memo Bot with OCR")
+st.title("📄 GPT Investment Memo Generator (with OCR)")
 
-uploaded_file = st.file_uploader("Upload text-based pitch deck (PDF)", type=["pdf"])
+uploaded_file = st.file_uploader("Upload scanned pitch deck (PDF)", type=["pdf"])
 if st.button("Generate Memo") and uploaded_file:
     with st.spinner("Extracting text and analyzing deck..."):
         try:
-            text = extract_text_from_pdf(uploaded_file)
+            text = extract_text_via_ocr_space(uploaded_file)
             if not text.strip():
-                st.error("❌ No extractable text found. Please upload a text-based PDF.")
+                st.error("❌ No text could be extracted via OCR.")
             else:
                 st.text_area("Extracted Text", text[:2000], height=200)
                 prompt = build_prompt(text)
