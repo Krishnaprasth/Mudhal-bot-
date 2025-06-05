@@ -4,26 +4,40 @@ import os
 import PyPDF2
 from fpdf import FPDF
 
-# Set OpenAI API Key securely from Streamlit secrets or environment
+# ✅ Use API key from secrets or env
 openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="Startup Investment Memo Generator", layout="centered")
 st.title("📄 Startup Investment Memo Generator")
-st.write("Upload a pitch deck or paste a founder note to generate a memo and download it as PDF.")
+st.write("Upload a pitch deck or paste a founder note to generate a clean PDF memo.")
 
 uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
 submit = st.button("🚀 Generate Investment Memo")
 
-# Extract text from uploaded PDF
+# ✅ Extract text from uploaded PDF
 def extract_text_from_pdf(file):
     pdf = PyPDF2.PdfReader(file)
     return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-# Construct GPT prompt
+# ✅ Clean smart characters for PDF-safe output
+def clean_text(text):
+    replacements = {
+        '\u2018': "'", '\u2019': "'",
+        '\u201c': '"', '\u201d': '"',
+        '\u2013': '-', '\u2014': '-',
+        '\u2022': '*', '\u00a0': ' '
+    }
+    for orig, repl in replacements.items():
+        text = text.replace(orig, repl)
+    return text
+
+# ✅ Memo prompt with revised scoring matrix
 def build_prompt(text):
     return f"""
-You are a venture capital analyst. Write a detailed investment memo in the following format:
+You are a venture capital analyst. Based on the startup input below, write a detailed, well-formatted investment memo.
+
+Include these sections:
 
 1. Executive Summary  
 2. Team (highlight relevant experience and time spent on this idea)  
@@ -57,28 +71,25 @@ Startup Input:
 {text}
 """
 
-# PDF generation
+# ✅ Generate PDF memo
 def generate_pdf(text):
+    cleaned = clean_text(text)
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("Arial", size=12)
-    for line in text.split("\n"):
+    pdf.set_font("Arial", "", 12)
+    for line in cleaned.split("\n"):
         if line.strip():
             pdf.multi_cell(0, 10, txt=line, align="L")
-    pdf_path = "investment_memo_output.pdf"
-    pdf.output(pdf_path)
-    return pdf_path
+    output_path = "investment_memo_output.pdf"
+    pdf.output(output_path)
+    return output_path
 
-# Main logic
+# ✅ Main logic
 if submit and (startup_text.strip() or uploaded_file):
     with st.spinner("🧠 Generating memo..."):
         try:
-            if uploaded_file:
-                content = extract_text_from_pdf(uploaded_file)
-            else:
-                content = startup_text.strip()
-
+            content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
             prompt = build_prompt(content)
 
             response = openai.ChatCompletion.create(
@@ -95,12 +106,12 @@ if submit and (startup_text.strip() or uploaded_file):
             st.markdown("### 📋 Memo Preview")
             st.text(result)
 
-            # Generate PDF
-            pdf_file_path = generate_pdf(result)
-            with open(pdf_file_path, "rb") as f:
-                st.download_button("📥 Download Memo as PDF", f, file_name="investment_memo.pdf", mime="application/pdf")
+            pdf_path = generate_pdf(result)
+
+            with open(pdf_path, "rb") as f:
+                st.download_button("📥 Download as PDF", f, file_name="investment_memo.pdf", mime="application/pdf")
 
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
 else:
-    st.info("Please upload a PDF or paste a note to get started.")
+    st.info("Please upload a PDF or paste founder note to begin.")
