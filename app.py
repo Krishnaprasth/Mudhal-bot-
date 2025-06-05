@@ -1,9 +1,7 @@
 import streamlit as st
 import os
 import json
-import tempfile
-import pytesseract
-from pdf2image import convert_from_bytes
+import fitz  # PyMuPDF
 from openai import OpenAI
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -19,10 +17,13 @@ uploaded_file = st.file_uploader("📄 Upload pitch deck (PDF)", type=["pdf"])
 startup_text = st.text_area("Or paste founder note / call summary", height=250)
 submit = st.button("🚀 Generate One-Pager")
 
-def extract_text_with_ocr(file):
-    images = convert_from_bytes(file.read())
-    extracted_text = "\n".join([pytesseract.image_to_string(img) for img in images])
-    return extracted_text
+def extract_text_from_pdf(file):
+    try:
+        with fitz.open(stream=file.read(), filetype="pdf") as doc:
+            text = "\n".join([page.get_text() for page in doc])
+        return text.strip()
+    except Exception:
+        return ""
 
 def build_prompt(text):
     return f"""
@@ -117,7 +118,11 @@ def generate_pdf(data):
 if submit and (startup_text.strip() or uploaded_file):
     with st.spinner("Generating one-pager memo..."):
         try:
-            content = extract_text_with_ocr(uploaded_file) if uploaded_file else startup_text.strip()
+            content = extract_text_from_pdf(uploaded_file) if uploaded_file else startup_text.strip()
+            if not content.strip():
+                st.error("❌ No readable text found in the PDF. Try uploading a different version or paste manually.")
+                st.stop()
+
             st.markdown("### 🔍 Extracted Text Preview")
             st.text_area("Input Sent to GPT", content[:3000], height=200)
 
