@@ -1,7 +1,7 @@
 import streamlit as st
 import openai
 import os
-import PyPDF2
+import pdfplumber
 import json
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -18,8 +18,8 @@ startup_text = st.text_area("Or paste founder note / call summary", height=250)
 submit = st.button("🚀 Generate One-Pager")
 
 def extract_text_from_pdf(file):
-    pdf = PyPDF2.PdfReader(file)
-    return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+    with pdfplumber.open(file) as pdf:
+        return "\n".join([page.extract_text() or '' for page in pdf.pages])
 
 def build_prompt(text):
     return f"""
