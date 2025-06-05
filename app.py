@@ -150,7 +150,16 @@ if submit and (startup_text.strip() or uploaded_file):
                 temperature=0.3
             )
 
-            parsed = json.loads(response.choices[0].message.content.strip())
+            raw_response = response.choices[0].message.content.strip()
+            if raw_response.startswith("```"):
+                raw_response = raw_response.strip("`").strip("json").strip()
+            try:
+                parsed = json.loads(raw_response)
+            except json.JSONDecodeError:
+                st.error("⚠️ GPT response could not be parsed as JSON. Please check the content format.")
+                st.text_area("Raw GPT Output", raw_response, height=300)
+                st.stop()
+
             st.markdown(f"### 🧾 Preview: {parsed.get('startup_name', 'Startup')}")
             st.markdown(parsed.get("one_liner", ""))
 
