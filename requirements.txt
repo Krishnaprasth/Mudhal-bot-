@@ -1,7 +1,9 @@
 streamlit
-openai
-PyMuPDF
+openai>=1.0.0
+pdf2image
+pytesseract
 reportlab
+
 
 
 
