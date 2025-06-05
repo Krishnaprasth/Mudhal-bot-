@@ -6,9 +6,17 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import os
+import fitz  # PyMuPDF
 
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+def extract_text_from_pdf(file):
+    text = ""
+    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
 
 def build_prompt(text):
     return f"""Act like a VC analyst. Read the input below and return JSON:
@@ -86,15 +94,15 @@ def generate_pdf(data):
 st.set_page_config(page_title="Startup Memo Bot")
 st.title("📄 GPT Investment Memo Generator")
 
-uploaded_file = st.file_uploader("Upload pitch deck text file", type=["txt"])
+uploaded_file = st.file_uploader("Upload pitch deck PDF", type=["pdf"])
 if st.button("Generate Memo") and uploaded_file:
-    with st.spinner("Analyzing deck text..."):
+    with st.spinner("Extracting text and analyzing deck..."):
         try:
-            text = uploaded_file.read().decode("utf-8")
+            text = extract_text_from_pdf(uploaded_file)
             if not text.strip():
-                st.error("❌ No text found in file.")
+                st.error("❌ No text found in PDF.")
             else:
-                st.text_area("Input Text", text[:3000], height=200)
+                st.text_area("Extracted Text", text[:3000], height=200)
                 prompt = build_prompt(text)
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
