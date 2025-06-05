@@ -5,14 +5,12 @@ import json
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # --- UI and Branding ---
 st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
-
-st.markdown(
-    """
+st.markdown("""
     <style>
         .reportview-container {
             background-color: #f7f9fa;
@@ -32,12 +30,9 @@ st.markdown(
             background-color: #005b96;
         }
     </style>
-    """,
-    unsafe_allow_html=True
-)
-
+""", unsafe_allow_html=True)
 st.title("📊 Mudhal Evaluation")
-st.markdown("Upload a pitch deck to generate a one-page investment analysis.")
+st.markdown("Upload a pitch deck to generate a structured investment report.")
 
 # --- OpenAI API ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -53,7 +48,7 @@ def extract_text_from_pdf(uploaded_file):
             text += content + "\n"
     return text
 
-# --- GPT Prompt Builder ---
+# --- Prompt Builder ---
 def build_prompt(text):
     return f"""
 You are a professional startup analyst at 'Mudhal Evaluation'.
@@ -88,35 +83,36 @@ Pitch Deck Text:
 {text}
 """
 
-# --- PDF Report Generator ---
-def generate_pdf(startup_name, summary, scorecard, ask, annexures):
+# --- Neat PDF Report Generator ---
+def generate_neat_pdf(startup_name, summary, scorecard, ask, annexures):
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate(f"{startup_name}_mudhal_report.pdf", pagesize=A4)
+    styles.add(ParagraphStyle(name="CompactBody", fontSize=10.5, leading=13))
+
+    doc = SimpleDocTemplate(f"{startup_name}_mudhal_report.pdf", pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
     story = []
 
-    # Heading
-    story.append(Paragraph(f"<b>{startup_name} – Mudhal Evaluation Report</b>", styles["Title"]))
-    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
+    story.append(Spacer(1, 6))
 
-    # Summary
     story.append(Paragraph("📄 Summary", styles["Heading2"]))
-    story.append(Paragraph(summary.replace("\n", "<br/>"), styles["BodyText"]))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(summary.replace("\n", "<br/>"), styles["CompactBody"]))
     story.append(PageBreak())
 
-    # Ask
     story.append(Paragraph("💸 Ask", styles["Heading2"]))
+    story.append(Spacer(1, 4))
     for bullet in ask:
-        story.append(Paragraph(f"• {bullet}", styles["BodyText"]))
-    story.append(Spacer(1, 12))
+        story.append(Paragraph(f"• {bullet}", styles["CompactBody"]))
+    story.append(Spacer(1, 8))
 
-    # Annexures
     story.append(Paragraph("📎 Annexures", styles["Heading2"]))
+    story.append(Spacer(1, 4))
     for ann in annexures:
-        story.append(Paragraph(f"• {ann}", styles["BodyText"]))
+        story.append(Paragraph(f"• {ann}", styles["CompactBody"]))
     story.append(PageBreak())
 
-    # Scorecard
     story.append(Paragraph("📊 Scorecard", styles["Heading2"]))
+    story.append(Spacer(1, 6))
     table_data = [["Category", "Parameter", "Score"]]
     total_score = 0
     count = 0
@@ -131,13 +127,16 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
             count += 1
     table_data.append(["", "Composite Score", round(total_score / count, 2) if count else "N/A"])
 
-    table = Table(table_data, repeatRows=1, colWidths=[130, 260, 80])
+    table = Table(table_data, repeatRows=1, colWidths=[120, 270, 70])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003262")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 9.5),
         ("ALIGN", (2, 1), (2, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(table)
 
@@ -146,7 +145,6 @@ def generate_pdf(startup_name, summary, scorecard, ask, annexures):
 
 # --- Main App Logic ---
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
-
 if st.button("📥 Generate Full Report") and uploaded_file:
     with st.spinner("Analyzing pitch deck with GPT..."):
         try:
@@ -169,7 +167,7 @@ if st.button("📥 Generate Full Report") and uploaded_file:
             annexures = result.get("annexures", [])
             startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
 
-            pdf_file = generate_pdf(startup_name, summary, scorecard, ask, annexures)
+            pdf_file = generate_neat_pdf(startup_name, summary, scorecard, ask, annexures)
 
             st.success("✅ Mudhal Evaluation Report is ready!")
             st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
