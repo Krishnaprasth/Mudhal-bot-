@@ -1,44 +1,22 @@
+# Save this as app.py
 import streamlit as st
 import PyPDF2
 import os
 import json
+import re
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-# --- UI and Branding ---
 st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
-st.markdown("""
-    <style>
-        .reportview-container {
-            background-color: #f7f9fa;
-            padding: 2rem;
-        }
-        h1 {
-            font-family: 'Segoe UI', sans-serif;
-            color: #003262;
-        }
-        .stButton>button {
-            background-color: #003262;
-            color: white;
-            border-radius: 6px;
-            padding: 0.5rem 1.5rem;
-        }
-        .stButton>button:hover {
-            background-color: #005b96;
-        }
-    </style>
-""", unsafe_allow_html=True)
 st.title("📊 Mudhal Evaluation")
 st.markdown("Upload a pitch deck to generate a structured investment report.")
 
-# --- OpenAI API ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Extract text from PDF ---
 def extract_text_from_pdf(uploaded_file):
     reader = PyPDF2.PdfReader(uploaded_file)
     text = ""
@@ -48,7 +26,6 @@ def extract_text_from_pdf(uploaded_file):
             text += content + "\n"
     return text
 
-# --- Prompt Builder ---
 def build_prompt(text):
     return f"""
 You are a professional startup analyst at 'Mudhal Evaluation'.
@@ -83,7 +60,6 @@ Pitch Deck Text:
 {text}
 """
 
-# --- Neat PDF Report Generator ---
 def generate_neat_pdf(startup_name, summary, scorecard, ask, annexures):
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="CompactBody", fontSize=10.5, leading=13))
@@ -93,7 +69,6 @@ def generate_neat_pdf(startup_name, summary, scorecard, ask, annexures):
 
     story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
     story.append(Spacer(1, 6))
-
     story.append(Paragraph("📄 Summary", styles["Heading2"]))
     story.append(Spacer(1, 4))
     story.append(Paragraph(summary.replace("\n", "<br/>"), styles["CompactBody"]))
@@ -143,7 +118,6 @@ def generate_neat_pdf(startup_name, summary, scorecard, ask, annexures):
     doc.build(story)
     return f"{startup_name}_mudhal_report.pdf"
 
-# --- Main App Logic ---
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
 if st.button("📥 Generate Full Report") and uploaded_file:
     with st.spinner("Analyzing pitch deck with GPT..."):
@@ -160,7 +134,10 @@ if st.button("📥 Generate Full Report") and uploaded_file:
                 temperature=0.2
             )
 
-            result = json.loads(response.choices[0].message.content.strip())
+            raw_content = response.choices[0].message.content.strip()
+            cleaned = re.sub(r"[\x00-\x1F\x7F]", "", raw_content)
+            result = json.loads(cleaned)
+
             summary = result.get("summary", "")
             scorecard = result.get("scorecard", {})
             ask = result.get("ask", [])
@@ -171,7 +148,6 @@ if st.button("📥 Generate Full Report") and uploaded_file:
 
             st.success("✅ Mudhal Evaluation Report is ready!")
             st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
-
             st.subheader("📌 Summary Preview")
             st.text_area("Summary", summary, height=400)
 
