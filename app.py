@@ -1,155 +1,71 @@
-# Save this as app.py
 import streamlit as st
-import PyPDF2
-import os
-import json
-import re
-from openai import OpenAI
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+import fitz  # PyMuPDF
+import openai
 
-st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
-st.title("📊 Mudhal Evaluation")
-st.markdown("Upload a pitch deck to generate a structured investment report.")
+# Set your OpenAI API Key
+openai.api_key = "YOUR_OPENAI_API_KEY"
 
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-client = OpenAI(api_key=OPENAI_API_KEY)
+st.set_page_config(page_title="Factsheet Extractor", layout="wide")
+st.title("📊 Factsheet Extractor – Investor Presentation Parser")
+st.markdown("Upload one or more investor decks (PDF), and we’ll extract a structured factsheet for each.")
 
-def extract_text_from_pdf(uploaded_file):
-    reader = PyPDF2.PdfReader(uploaded_file)
+# Define the sections to extract
+SECTIONS = {
+    "Startup Overview": ["Startup Name", "Sector", "Founded Year", "Product"],
+    "Founders": ["Founders"],
+    "Traction": ["Current Traction", "Monthly Active Users", "Key Customers"],
+    "Financials": ["Revenue"],
+    "Funding Details": ["Funds Raised", "Lead Investors", "Current Round", "Valuation", "Use of Funds"],
+    "Market and Competition": ["Market Size", "Competitors"],
+    "Ask": ["Ask (Amount)"]
+}
+
+# Upload PDFs
+uploaded_files = st.file_uploader("📁 Upload PDF Presentations", type=["pdf"], accept_multiple_files=True)
+
+def extract_text_from_pdf(pdf_file):
     text = ""
-    for page in reader.pages:
-        content = page.extract_text()
-        if content:
-            text += content + "\n"
+    with fitz.open(stream=pdf_file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
     return text
 
-def build_prompt(text):
-    return f"""
-You are a professional startup analyst at 'Mudhal Evaluation'.
+def extract_facts(text):
+    prompt = f"""
+From the following investor deck text, extract a structured factsheet for the startup. Only include fields if data is clearly present.
 
-Based on the pitch deck text below, prepare a comprehensive analysis report that includes:
+Fields to extract:
+{', '.join([field for group in SECTIONS.values() for field in group])}
 
-1. "summary": A full-page write-up covering:
-   - The startup’s core idea and problem it solves
-   - Founders' backgrounds, experience, and commitment
-   - Current business status: traction, users, revenue, customers
-   - Competitive landscape and market opportunity
-   - Any standout strengths or weaknesses from the deck
+Respond with one line per field in format:
+Field: Value
 
-2. "scorecard": A dictionary of 50 evaluation parameters grouped under categories (each parameter scored 0–10).
-
-3. "ask": Bullet points on:
-   - Amount being raised
-   - Round type (Pre-seed, Seed, Series A etc.)
-   - Intended use of funds
-   - Pre-money or post-money valuation if available
-
-4. "annexures": Bullet points on:
-   - Traction or revenue figures
-   - Financial metrics
-   - Shareholding pattern or cap table
-   - Key customers or partnerships
-   (If not found, respond with “Not Available”)
-
-Only return a valid JSON object with keys: summary, scorecard, ask, annexures.
-
-Pitch Deck Text:
-{text}
+Text:
+{text[:4000]}  # Truncated to stay within token limits
 """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+    content = response.choices[0].message.content.strip()
+    facts = {}
+    for line in content.splitlines():
+        if ":" in line:
+            key, val = line.split(":", 1)
+            facts[key.strip()] = val.strip()
+    return facts
 
-def generate_neat_pdf(startup_name, summary, scorecard, ask, annexures):
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CompactBody", fontSize=10.5, leading=13))
+if uploaded_files:
+    for pdf in uploaded_files:
+        with st.expander(f"📘 {pdf.name}", expanded=True):
+            with st.spinner("Extracting facts..."):
+                text = extract_text_from_pdf(pdf)
+                facts = extract_facts(text)
 
-    doc = SimpleDocTemplate(f"{startup_name}_mudhal_report.pdf", pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
-    story = []
-
-    story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
-    story.append(Spacer(1, 6))
-    story.append(Paragraph("📄 Summary", styles["Heading2"]))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph(summary.replace("\n", "<br/>"), styles["CompactBody"]))
-    story.append(PageBreak())
-
-    story.append(Paragraph("💸 Ask", styles["Heading2"]))
-    story.append(Spacer(1, 4))
-    for bullet in ask:
-        story.append(Paragraph(f"• {bullet}", styles["CompactBody"]))
-    story.append(Spacer(1, 8))
-
-    story.append(Paragraph("📎 Annexures", styles["Heading2"]))
-    story.append(Spacer(1, 4))
-    for ann in annexures:
-        story.append(Paragraph(f"• {ann}", styles["CompactBody"]))
-    story.append(PageBreak())
-
-    story.append(Paragraph("📊 Scorecard", styles["Heading2"]))
-    story.append(Spacer(1, 6))
-    table_data = [["Category", "Parameter", "Score"]]
-    total_score = 0
-    count = 0
-    for cat, items in scorecard.items():
-        for param, score in items.items():
-            try:
-                numeric_score = float(score)
-            except:
-                numeric_score = 0
-            table_data.append([cat, param, numeric_score])
-            total_score += numeric_score
-            count += 1
-    table_data.append(["", "Composite Score", round(total_score / count, 2) if count else "N/A"])
-
-    table = Table(table_data, repeatRows=1, colWidths=[120, 270, 70])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003262")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 1), (-1, -1), 9.5),
-        ("ALIGN", (2, 1), (2, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
-    story.append(table)
-
-    doc.build(story)
-    return f"{startup_name}_mudhal_report.pdf"
-
-uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
-if st.button("📥 Generate Full Report") and uploaded_file:
-    with st.spinner("Analyzing pitch deck with GPT..."):
-        try:
-            raw_text = extract_text_from_pdf(uploaded_file)
-            prompt = build_prompt(raw_text)
-
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a detail-oriented startup analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2
-            )
-
-            raw_content = response.choices[0].message.content.strip()
-            cleaned = re.sub(r"[\x00-\x1F\x7F]", "", raw_content)
-            result = json.loads(cleaned)
-
-            summary = result.get("summary", "")
-            scorecard = result.get("scorecard", {})
-            ask = result.get("ask", [])
-            annexures = result.get("annexures", [])
-            startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
-
-            pdf_file = generate_neat_pdf(startup_name, summary, scorecard, ask, annexures)
-
-            st.success("✅ Mudhal Evaluation Report is ready!")
-            st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
-            st.subheader("📌 Summary Preview")
-            st.text_area("Summary", summary, height=400)
-
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+            for section, fields in SECTIONS.items():
+                section_data = {field: facts[field] for field in fields if field in facts}
+                if section_data:
+                    st.markdown(f"### 🔹 {section}")
+                    for field, value in section_data.items():
+                        st.markdown(f"**{field}**: {value}")
