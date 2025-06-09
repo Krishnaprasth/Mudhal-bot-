@@ -51,7 +51,8 @@ def generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures):
     styles.add(ParagraphStyle(name="CompactBody", fontSize=10.5, leading=13))
     styles.add(ParagraphStyle(name="RedFlag", fontSize=10.5, textColor=colors.red, leading=13))
 
-    doc = SimpleDocTemplate(f"/mnt/data/{startup_name}_mudhal_fact_report.pdf", pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
+    output_path = f"/mnt/data/{startup_name}_mudhal_fact_report.pdf"
+    doc = SimpleDocTemplate(output_path, pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
     story = []
 
     story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
@@ -81,7 +82,7 @@ def generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures):
         story.append(Paragraph(f"• {ann}", styles["CompactBody"]))
 
     doc.build(story)
-    return f"/mnt/data/{startup_name}_mudhal_fact_report.pdf"
+    return output_path
 
 uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
 if st.button("📥 Generate Fact-Only Report") and uploaded_file:
@@ -112,7 +113,8 @@ if st.button("📥 Generate Fact-Only Report") and uploaded_file:
             pdf_file = generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures)
 
             st.success("✅ Report Ready!")
-            st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
+            with open(pdf_file, "rb") as f:
+                st.download_button("📄 Download Report", f, file_name=os.path.basename(pdf_file))
             st.subheader("📌 Summary Preview")
             st.text_area("Summary", summary, height=400)
             st.subheader("📋 Missing Info Checklist")
