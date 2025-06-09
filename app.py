@@ -1,71 +1,123 @@
 import streamlit as st
-import fitz  # PyMuPDF
-import openai
+import PyPDF2
+import os
+import json
+import re
+from openai import OpenAI
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-# Set your OpenAI API Key
-openai.api_key = "YOUR_OPENAI_API_KEY"
+st.set_page_config(page_title="Mudhal Evaluation", layout="centered")
+st.title("📊 Mudhal Evaluation")
+st.markdown("Upload a pitch deck to generate a **fact-only** investment evaluation report.")
 
-st.set_page_config(page_title="Factsheet Extractor", layout="wide")
-st.title("📊 Factsheet Extractor – Investor Presentation Parser")
-st.markdown("Upload one or more investor decks (PDF), and we’ll extract a structured factsheet for each.")
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Define the sections to extract
-SECTIONS = {
-    "Startup Overview": ["Startup Name", "Sector", "Founded Year", "Product"],
-    "Founders": ["Founders"],
-    "Traction": ["Current Traction", "Monthly Active Users", "Key Customers"],
-    "Financials": ["Revenue"],
-    "Funding Details": ["Funds Raised", "Lead Investors", "Current Round", "Valuation", "Use of Funds"],
-    "Market and Competition": ["Market Size", "Competitors"],
-    "Ask": ["Ask (Amount)"]
-}
-
-# Upload PDFs
-uploaded_files = st.file_uploader("📁 Upload PDF Presentations", type=["pdf"], accept_multiple_files=True)
-
-def extract_text_from_pdf(pdf_file):
+def extract_text_from_pdf(uploaded_file):
+    reader = PyPDF2.PdfReader(uploaded_file)
     text = ""
-    with fitz.open(stream=pdf_file.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
+    for page in reader.pages:
+        content = page.extract_text()
+        if content:
+            text += content + "\n"
     return text
 
-def extract_facts(text):
-    prompt = f"""
-From the following investor deck text, extract a structured factsheet for the startup. Only include fields if data is clearly present.
+def build_prompt(text):
+    return f"""
+You are a fact-based analyst from 'Mudhal Evaluation'.
 
-Fields to extract:
-{', '.join([field for group in SECTIONS.values() for field in group])}
+From the pitch deck text below, extract only what is explicitly mentioned (NO assumptions):
+1. "summary": A factual summary only based on the deck.
+2. "ask": Round, amount, valuation, use of funds etc.
+3. "annexures": Traction, revenue, financials, shareholding pattern, key customers – or say 'Not Available'.
+4. "checklist": For each of these, mark "✅" if found, else "❌":
+   - Traction
+   - Revenue
+   - Financial Metrics
+   - Shareholding Pattern
+   - Key Customers
 
-Respond with one line per field in format:
-Field: Value
+Output JSON with keys: summary, ask, annexures, checklist.
 
-Text:
-{text[:4000]}  # Truncated to stay within token limits
+Deck:
+{text}
 """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-    content = response.choices[0].message.content.strip()
-    facts = {}
-    for line in content.splitlines():
-        if ":" in line:
-            key, val = line.split(":", 1)
-            facts[key.strip()] = val.strip()
-    return facts
 
-if uploaded_files:
-    for pdf in uploaded_files:
-        with st.expander(f"📘 {pdf.name}", expanded=True):
-            with st.spinner("Extracting facts..."):
-                text = extract_text_from_pdf(pdf)
-                facts = extract_facts(text)
+def generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures):
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="CompactBody", fontSize=10.5, leading=13))
+    styles.add(ParagraphStyle(name="RedFlag", fontSize=10.5, textColor=colors.red, leading=13))
 
-            for section, fields in SECTIONS.items():
-                section_data = {field: facts[field] for field in fields if field in facts}
-                if section_data:
-                    st.markdown(f"### 🔹 {section}")
-                    for field, value in section_data.items():
-                        st.markdown(f"**{field}**: {value}")
+    doc = SimpleDocTemplate(f"/mnt/data/{startup_name}_mudhal_fact_report.pdf", pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
+    story = []
+
+    story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
+    story.append(Spacer(1, 6))
+
+    story.append(Paragraph("📄 Summary", styles["Heading2"]))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(summary.replace("\n", "<br/>"), styles["CompactBody"]))
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("📋 Missing Information Checklist", styles["Heading2"]))
+    story.append(Spacer(1, 6))
+    for item, status in checklist.items():
+        style = styles["CompactBody"] if status == "✅" else styles["RedFlag"]
+        story.append(Paragraph(f"{item}: {status}", style))
+    story.append(PageBreak())
+
+    story.append(Paragraph("💸 Ask", styles["Heading2"]))
+    story.append(Spacer(1, 4))
+    for bullet in ask:
+        story.append(Paragraph(f"• {bullet}", styles["CompactBody"]))
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("📎 Annexures", styles["Heading2"]))
+    story.append(Spacer(1, 4))
+    for ann in annexures:
+        story.append(Paragraph(f"• {ann}", styles["CompactBody"]))
+
+    doc.build(story)
+    return f"/mnt/data/{startup_name}_mudhal_fact_report.pdf"
+
+uploaded_file = st.file_uploader("Upload Pitch Deck (PDF)", type=["pdf"])
+if st.button("📥 Generate Fact-Only Report") and uploaded_file:
+    with st.spinner("Analyzing deck with GPT..."):
+        try:
+            raw_text = extract_text_from_pdf(uploaded_file)
+            prompt = build_prompt(raw_text)
+
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a factual analyst. Do not assume."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2
+            )
+
+            raw_content = response.choices[0].message.content.strip()
+            cleaned = re.sub(r"[\x00-\x1F\x7F]", "", raw_content)
+            result = json.loads(cleaned)
+
+            summary = result.get("summary", "")
+            ask = result.get("ask", [])
+            annexures = result.get("annexures", [])
+            checklist = result.get("checklist", {})
+            startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
+
+            pdf_file = generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures)
+
+            st.success("✅ Report Ready!")
+            st.download_button("📄 Download Report", open(pdf_file, "rb"), file_name=pdf_file)
+            st.subheader("📌 Summary Preview")
+            st.text_area("Summary", summary, height=400)
+            st.subheader("📋 Missing Info Checklist")
+            for k, v in checklist.items():
+                st.markdown(f"**{k}**: {'✅' if v == '✅' else '❌'}")
+
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
