@@ -55,7 +55,7 @@ def generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures):
     doc = SimpleDocTemplate(output_path, pagesize=A4, topMargin=36, bottomMargin=36, leftMargin=36, rightMargin=36)
     story = []
 
-    story.append(Paragraph(f"{startup_name} – Mudhal Evaluation Report", styles["Title"]))
+    story.append(Paragraph(f"{startup_name.replace('_', ' ')} – Mudhal Evaluation Report", styles["Title"]))
     story.append(Spacer(1, 6))
 
     story.append(Paragraph("📄 Summary", styles["Heading2"]))
@@ -108,7 +108,10 @@ if st.button("📥 Generate Fact-Only Report") and uploaded_file:
             ask = result.get("ask", [])
             annexures = result.get("annexures", [])
             checklist = result.get("checklist", {})
-            startup_name = uploaded_file.name.split(".")[0].replace("_", " ").title()
+
+            # ✅ Safe filename
+            startup_name_raw = uploaded_file.name.split(".")[0]
+            startup_name = re.sub(r"[^\w\-]", "_", startup_name_raw)
 
             pdf_file = generate_fact_only_pdf(startup_name, summary, checklist, ask, annexures)
 
