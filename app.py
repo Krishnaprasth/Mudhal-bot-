@@ -3,15 +3,15 @@ import fitz  # PyMuPDF
 import openai
 import os
 
-# 🔐 Set your OpenAI API key
+# Set your OpenAI API Key
 openai.api_key = os.getenv("OPENAI_API_KEY") or "YOUR_OPENAI_API_KEY"
 
-# Page configuration
+# UI Config
 st.set_page_config(page_title="Factsheet Extractor", layout="wide")
 st.title("📊 Factsheet Extractor – Investor Presentation Parser")
 st.markdown("Upload investor decks in PDF format and extract a structured startup factsheet. Missing data will be skipped.")
 
-# Fields to extract under each section
+# Fields to Extract
 SECTIONS = {
     "Startup Overview": ["Startup Name", "Sector", "Founded Year", "Product"],
     "Founders": ["Founders"],
@@ -25,7 +25,7 @@ SECTIONS = {
 # Upload PDFs
 uploaded_files = st.file_uploader("📁 Upload PDF Presentations", type=["pdf"], accept_multiple_files=True)
 
-# Extract text from PDF using PyMuPDF
+# PDF Text Extraction
 def extract_text_from_pdf(pdf_file):
     text = ""
     with fitz.open(stream=pdf_file.read(), filetype="pdf") as doc:
@@ -33,7 +33,7 @@ def extract_text_from_pdf(pdf_file):
             text += page.get_text()
     return text
 
-# Use OpenAI to extract structured facts
+# GPT-Based Fact Extraction
 def extract_facts(text):
     fields = [f for group in SECTIONS.values() for f in group]
     prompt = f"""
@@ -46,7 +46,7 @@ Field: Value
 Do not include any fields not mentioned in the text.
 
 Text:
-{text[:4000]}  # Truncated to ensure token limit
+{text[:4000]}
 """
     response = openai.ChatCompletion.create(
         model="gpt-4",
@@ -61,7 +61,7 @@ Text:
             facts[key.strip()] = val.strip()
     return facts
 
-# Process uploaded files
+# UI Display Logic
 if uploaded_files:
     for pdf in uploaded_files:
         with st.expander(f"📘 {pdf.name}", expanded=True):
