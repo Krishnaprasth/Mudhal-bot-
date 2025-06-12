@@ -1,7 +1,7 @@
-streamlit
-openai
-PyPDF2
-reportlab
+streamlit>=1.25
+PyMuPDF>=1.22
+openai>=1.10
+
 
 
 
