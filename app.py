@@ -44,16 +44,17 @@ def extract_text_from_pdf(pdf_file):
             text += page.get_text()
     return text
 
-# GPT Extractor
+# GPT Extractor with improved prompt
 
 def extract_facts_and_summary(text):
     prompt = f"""
-You are an AI analyst extracting structured data from a startup investor deck.
+You are an AI analyst extracting facts from an investor deck.
 
-Return output in two parts:
-1. A short bullet-point summary (5-10 points)
-2. A list of fields from the below list that are clearly present with exact values. Format as: Field: Value
-Only return fields that are explicitly mentioned in the text.
+Return two parts:
+1. A 5–10 point factual bullet summary
+2. A list of only those fields from the following that are clearly implied or explicitly stated. Format: Field: Value
+Use context — match synonyms or indirect language if the concept is obvious (e.g. 'team size ~50' → Team Size).
+Do NOT guess — only include if there's supporting evidence.
 
 Fields:
 {', '.join(FIELDS)}
@@ -82,7 +83,7 @@ Text:
             if key.strip() in FIELDS:
                 facts[key.strip()] = val.strip()
 
-    return summary, facts
+    return summary, facts, text[:3000], content
 
 # PDF Generator
 
@@ -147,7 +148,7 @@ if uploaded_files := st.file_uploader("Upload PDF", type="pdf", accept_multiple_
         with st.expander(f"📘 {file.name}", expanded=True):
             with st.spinner("Extracting facts..."):
                 raw_text = extract_text_from_pdf(file)
-                summary, facts = extract_facts_and_summary(raw_text)
+                summary, facts, extracted_text, gpt_output = extract_facts_and_summary(raw_text)
 
             st.markdown("### 🔹 Summary")
             for bullet in summary:
@@ -162,3 +163,7 @@ if uploaded_files := st.file_uploader("Upload PDF", type="pdf", accept_multiple_
 
             pdf_bytes = generate_pdf(summary, facts)
             st.download_button("📄 Download Factsheet PDF", pdf_bytes, file_name=f"{file.name.replace('.pdf','')}_factsheet.pdf", mime="application/pdf")
+
+            with st.expander("🛠 Debug (Extracted Text & GPT Output)"):
+                st.text_area("Extracted Text", extracted_text, height=300)
+                st.text_area("GPT Output", gpt_output, height=300)
