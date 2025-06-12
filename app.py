@@ -3,15 +3,15 @@ import fitz  # PyMuPDF
 import openai
 import os
 
-# 🔐 Set your OpenAI API key (from environment or paste manually)
+# ✅ Set your OpenAI API key
 openai.api_key = os.getenv("OPENAI_API_KEY") or "YOUR_OPENAI_API_KEY"
 
-# Streamlit page settings
+# ✅ Page configuration
 st.set_page_config(page_title="Factsheet Extractor", layout="wide")
 st.title("📊 Factsheet Extractor – Investor Presentation Parser")
 st.markdown("Upload investor decks (PDFs) to extract a structured startup factsheet. Fields not found will be skipped.")
 
-# Structured sections and fields to extract
+# ✅ Define the sections and fields
 SECTIONS = {
     "Startup Overview": ["Startup Name", "Sector", "Founded Year", "Product"],
     "Founders": ["Founders"],
@@ -22,10 +22,10 @@ SECTIONS = {
     "Ask": ["Ask (Amount)"]
 }
 
-# Upload PDFs
+# ✅ Upload PDF files
 uploaded_files = st.file_uploader("📁 Upload PDF Presentations", type=["pdf"], accept_multiple_files=True)
 
-# Function to extract text from PDF using PyMuPDF
+# ✅ Extract text from PDF using PyMuPDF
 def extract_text_from_pdf(pdf_file):
     text = ""
     with fitz.open(stream=pdf_file.read(), filetype="pdf") as doc:
@@ -33,23 +33,23 @@ def extract_text_from_pdf(pdf_file):
             text += page.get_text()
     return text
 
-# Function to extract structured facts using OpenAI
+# ✅ Extract facts using OpenAI Chat API (v1.x syntax)
 def extract_facts(text):
     fields = [f for group in SECTIONS.values() for f in group]
     prompt = f"""
-From the below investor presentation text, extract only available values for the following fields:
+From the following investor presentation text, extract only the available fields listed below:
 
 {', '.join(fields)}
 
 Format output as:
 Field: Value
 
-Skip any field not clearly mentioned in the text.
+Do not guess or fabricate. Only include data explicitly mentioned.
 
 Text:
-{text[:4000]}  # truncated for token limit
+{text[:4000]}
 """
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
@@ -62,7 +62,7 @@ Text:
             facts[key.strip()] = val.strip()
     return facts
 
-# Main logic
+# ✅ Main logic
 if uploaded_files:
     for pdf in uploaded_files:
         with st.expander(f"📘 {pdf.name}", expanded=True):
