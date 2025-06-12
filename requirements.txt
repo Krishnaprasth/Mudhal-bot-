@@ -1,7 +1,7 @@
 streamlit>=1.25
 PyMuPDF>=1.22
 openai>=1.10
-
+reportlab>=4.0
 
 
 
