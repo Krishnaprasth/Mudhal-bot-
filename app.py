@@ -1,169 +1,104 @@
 import streamlit as st
-import fitz  # PyMuPDF
+import pandas as pd
 import openai
+import tempfile
 import os
 from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 
-# OpenAI API Key
-openai.api_key = os.getenv("OPENAI_API_KEY") or "YOUR_OPENAI_API_KEY"
+st.set_page_config(page_title="Store Metrics ChatBot", layout="wide")
+st.title("📊 California Burrito - Store Metrics ChatBot")
 
-# Page config
-st.set_page_config(page_title="Factsheet Extractor", layout="wide")
-st.title("📊 Factsheet Extractor – Investor Presentation Parser")
-st.markdown("Upload investor decks (PDFs) to extract a structured startup factsheet.")
+# --- SIDEBAR SETTINGS ---
+st.sidebar.header("Upload Raw MIS Files")
+openai.api_key = st.sidebar.text_input("🔑 Enter your OpenAI API Key", type="password")
+uploaded_files = st.sidebar.file_uploader("Upload multiple Excel files (MIS format)", type=[".xlsx", ".xls"], accept_multiple_files=True)
 
-# Fixed 50 key parameters (including website and LinkedIn profiles)
-FIELDS = [
-    "Startup Name", "Founded Year", "Sector", "Product", "Business Model", "Website", "Headquarters",
-    "Founders", "Founder Backgrounds", "LinkedIn Profiles", "Team Size", "Key Hires", "Org Structure",
-    "Users", "Monthly Active Users", "Daily Active Users", "Revenue", "ARR", "MRR", "Retention", "Churn Rate", "GMV", "Key Customers",
-    "Burn Rate", "Runway", "Profit Margin", "CAC", "LTV", "Unit Economics", "Gross Margin", "EBITDA",
-    "Market Size", "Target Geography", "TAM", "SAM", "SOM", "Competition", "Market Share",
-    "Funds Raised", "Lead Investors", "Current Round", "Ask Amount", "Valuation", "Use of Funds", "Exit Strategy",
-    "Sales Conversion Rate", "Avg Order Value", "Payback Period", "Revenue Growth %"
-]
+@st.cache_data(show_spinner=False)
+def parse_mis_files(files):
+    all_rows = []
+    for uploaded_file in files:
+        try:
+            xl = pd.ExcelFile(uploaded_file)
+            for sheet in xl.sheet_names:
+                df = xl.parse(sheet, header=None)
+                try:
+                    store_names = df.iloc[2]
+                    types = df.iloc[3]
+                    for row_idx in range(4, 25):
+                        row_label = df.iloc[row_idx, 1]
+                        if isinstance(row_label, str) and row_label.strip():
+                            metric = row_label.strip()
+                            values = df.iloc[row_idx]
+                            for col_idx, (store, val_type) in enumerate(zip(store_names, types)):
+                                if val_type == "Amount" and isinstance(store, str):
+                                    try:
+                                        value = float(values[col_idx])
+                                        all_rows.append({
+                                            "Month": sheet.strip(),
+                                            "Store": store.strip(),
+                                            "Metric": metric,
+                                            "Value": value
+                                        })
+                                    except:
+                                        continue
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return pd.DataFrame(all_rows)
 
-# Categorize fields for grouping
-SECTIONS = {
-    "Company Info": ["Startup Name", "Founded Year", "Sector", "Product", "Business Model", "Website", "Headquarters"],
-    "Team": ["Founders", "Founder Backgrounds", "LinkedIn Profiles", "Team Size", "Key Hires", "Org Structure"],
-    "Traction": ["Users", "Monthly Active Users", "Daily Active Users", "Key Customers", "GMV", "Revenue", "ARR", "MRR", "Retention", "Churn Rate"],
-    "Financials": ["Burn Rate", "Runway", "Profit Margin", "Gross Margin", "Unit Economics", "EBITDA"],
-    "Metrics": ["CAC", "LTV", "Sales Conversion Rate", "Avg Order Value", "Payback Period", "Revenue Growth %"],
-    "Market": ["Market Size", "Target Geography", "TAM", "SAM", "SOM", "Competition", "Market Share"],
-    "Fundraising": ["Funds Raised", "Lead Investors", "Current Round", "Ask Amount", "Valuation", "Use of Funds", "Exit Strategy"]
-}
+if uploaded_files:
+    df = parse_mis_files(uploaded_files)
+    if not df.empty:
+        st.success(f"✅ Parsed {len(uploaded_files)} files. {df.shape[0]} rows loaded.")
 
-# PDF Text Extractor
-def extract_text_from_pdf(pdf_file):
-    text = ""
-    with fitz.open(stream=pdf_file.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
+        with st.expander("🔍 Preview Extracted Data"):
+            st.dataframe(df.head(50))
 
-# GPT Extractor with improved prompt
+        # --- DOWNLOAD DATA ---
+        buffer = BytesIO()
+        df.to_excel(buffer, index=False)
+        st.download_button("📥 Download Extracted Data as Excel", data=buffer.getvalue(), file_name="Extracted_MIS_Data.xlsx")
 
-def extract_facts_and_summary(text):
-    prompt = f"""
-You are an AI analyst extracting facts from an investor deck.
+        # --- CHAT INTERFACE ---
+        st.markdown("---")
+        st.subheader("💬 Ask a Question")
+        query = st.text_input("Type your question (e.g., 'Compare sales in May vs April')")
 
-Return two parts:
-1. A 5–10 point factual bullet summary
-2. A list of only those fields from the following that are clearly implied or explicitly stated. Format: Field: Value
-Use context — match synonyms or indirect language if the concept is obvious (e.g. 'team size ~50' → Team Size).
-Do NOT guess — only include if there's supporting evidence.
+        if query and openai.api_key:
+            with st.spinner("Thinking..."):
+                prompt = f"""
+You are a smart data analyst. You are given a DataFrame with the following columns:
+- Month
+- Store
+- Metric
+- Value
 
-Fields:
-{', '.join(FIELDS)}
+The user will ask questions about the data such as:
+- What was the Net Sales in May?
+- How does Gross Sales in May compare to April for EGL?
+- Show Rent % of Sales for ARK
+- Compare EBITDA across stores in Oct
 
-Text:
-{text[:4000]}
+Use the DataFrame named `df`. Pivot or filter as needed. Always return clean, clear answers. Format numbers with commas and show % if applicable.
+
+User Query: "{query}"
+
+Respond only with the answer. Do not explain.
 """
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-    )
-    content = response.choices[0].message.content.strip()
-
-    summary = []
-    facts = {}
-    lines = content.splitlines()
-    parsing_summary = True
-
-    for line in lines:
-        if parsing_summary and line.strip().startswith("-"):
-            summary.append(line.strip())
-        elif ":" in line:
-            parsing_summary = False
-            key, val = line.split(":", 1)
-            if key.strip() in FIELDS:
-                facts[key.strip()] = val.strip()
-
-    return summary, facts, text[:3000], content
-
-# PDF Generator
-
-def generate_pdf(summary, facts):
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    y = height - 50
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Startup Factsheet")
-    y -= 30
-
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(50, y, "Summary")
-    y -= 20
-    c.setFont("Helvetica", 12)
-    for bullet in summary:
-        c.drawString(60, y, bullet)
-        y -= 16
-        if y < 80:
-            c.showPage()
-            y = height - 50
-
-    for section, fields in SECTIONS.items():
-        section_data = {field: facts[field] for field in fields if field in facts}
-        if section_data:
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(50, y, f"{section}")
-            y -= 20
-            c.setFont("Helvetica", 12)
-            for field, value in section_data.items():
-                for line in wrap_text(f"{field}: {value}", 90):
-                    c.drawString(60, y, line)
-                    y -= 16
-                    if y < 80:
-                        c.showPage()
-                        y = height - 50
-
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-# Text wrap utility
-
-def wrap_text(text, max_chars):
-    words = text.split()
-    lines, current_line = [], ""
-    for word in words:
-        if len(current_line) + len(word) + 1 <= max_chars:
-            current_line += (" " if current_line else "") + word
-        else:
-            lines.append(current_line)
-            current_line = word
-    if current_line:
-        lines.append(current_line)
-    return lines
-
-# App Logic
-if uploaded_files := st.file_uploader("Upload PDF", type="pdf", accept_multiple_files=True):
-    for file in uploaded_files:
-        with st.expander(f"📘 {file.name}", expanded=True):
-            with st.spinner("Extracting facts..."):
-                raw_text = extract_text_from_pdf(file)
-                summary, facts, extracted_text, gpt_output = extract_facts_and_summary(raw_text)
-
-            st.markdown("### 🔹 Summary")
-            for bullet in summary:
-                st.markdown(f"- {bullet}")
-
-            for section, fields in SECTIONS.items():
-                section_data = {field: facts[field] for field in fields if field in facts}
-                if section_data:
-                    st.markdown(f"### 🔹 {section}")
-                    for field, value in section_data.items():
-                        st.markdown(f"**{field}**: {value}")
-
-            pdf_bytes = generate_pdf(summary, facts)
-            st.download_button("📄 Download Factsheet PDF", pdf_bytes, file_name=f"{file.name.replace('.pdf','')}_factsheet.pdf", mime="application/pdf")
-
-            with st.expander("🛠 Debug (Extracted Text & GPT Output)"):
-                st.text_area("Extracted Text", extracted_text, height=300)
-                st.text_area("GPT Output", gpt_output, height=300)
+                try:
+                    response = openai.ChatCompletion.create(
+                        model="gpt-4",
+                        messages=[{"role": "system", "content": "You are a Python Pandas analyst."},
+                                 {"role": "user", "content": prompt}],
+                        temperature=0.2
+                    )
+                    answer = response['choices'][0]['message']['content']
+                    st.markdown("### ✅ Answer")
+                    st.markdown(answer)
+                except Exception as e:
+                    st.error("Error from OpenAI: " + str(e))
+    else:
+        st.warning("Could not extract data from uploaded files.")
+else:
+    st.info("Upload raw MIS Excel files from California Burrito to begin.")
