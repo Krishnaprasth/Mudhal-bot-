@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import openai
-import tempfile
-import os
 from io import BytesIO
 
 st.set_page_config(page_title="Store Metrics ChatBot", layout="wide")
@@ -13,7 +11,7 @@ st.sidebar.header("Upload Raw MIS Files")
 openai.api_key = st.sidebar.text_input("🔑 Enter your OpenAI API Key", type="password")
 uploaded_files = st.sidebar.file_uploader("Upload multiple Excel files (MIS format)", type=[".xlsx", ".xls"], accept_multiple_files=True)
 
-@st.cache_data(show_spinner=False)
+# --- Parse MIS Files ---
 def parse_mis_files(files):
     all_rows = []
     for uploaded_file in files:
@@ -41,26 +39,29 @@ def parse_mis_files(files):
                                         })
                                     except:
                                         continue
-                except Exception:
+                except Exception as e:
+                    st.warning(f"Warning parsing sheet '{sheet}' in file '{uploaded_file.name}': {e}")
                     continue
-        except Exception:
+        except Exception as e:
+            st.warning(f"Failed to read file '{uploaded_file.name}': {e}")
             continue
     return pd.DataFrame(all_rows)
 
+# --- Main App ---
 if uploaded_files:
     df = parse_mis_files(uploaded_files)
     if not df.empty:
         st.success(f"✅ Parsed {len(uploaded_files)} files. {df.shape[0]} rows loaded.")
 
         with st.expander("🔍 Preview Extracted Data"):
-            st.dataframe(df.head(50))
+            st.dataframe(df.head(100))
 
-        # --- DOWNLOAD DATA ---
+        # --- Download Button ---
         buffer = BytesIO()
         df.to_excel(buffer, index=False)
         st.download_button("📥 Download Extracted Data as Excel", data=buffer.getvalue(), file_name="Extracted_MIS_Data.xlsx")
 
-        # --- CHAT INTERFACE ---
+        # --- Chatbot UI ---
         st.markdown("---")
         st.subheader("💬 Ask a Question")
         query = st.text_input("Type your question (e.g., 'Compare sales in May vs April')")
@@ -99,6 +100,6 @@ Respond only with the answer. Do not explain.
                 except Exception as e:
                     st.error("Error from OpenAI: " + str(e))
     else:
-        st.warning("Could not extract data from uploaded files.")
+        st.warning("No valid data extracted. Check file format and structure.")
 else:
     st.info("Upload raw MIS Excel files from California Burrito to begin.")
