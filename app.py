@@ -30,25 +30,35 @@ def load_matrix_excel(file):
             raw_df = xls.parse(sheet, header=None)
             if raw_df.shape[0] < 4 or raw_df.shape[1] < 4:
                 continue
+
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
             data_block = raw_df.iloc[3:, 3:]
+
             usable_columns = min(len(combined_headers), data_block.shape[1])
             combined_headers = combined_headers[:usable_columns]
             data_block = data_block.iloc[:, :usable_columns]
+
+            usable_rows = min(len(raw_df.iloc[3:, 0]), data_block.shape[0])
+            data_block = data_block.iloc[:usable_rows, :]
+
             value_df = data_block.copy()
-            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values[:len(data_block)])
+            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values[:usable_rows])
+
             new_column_names = ['Metric'] + combined_headers.tolist()
-            if len(new_column_names) != value_df.shape[1]:
+            if value_df.shape[1] != len(new_column_names):
+                st.warning(f"⚠️ Skipping sheet '{sheet}' — column mismatch between headers and data.")
                 continue
             value_df.columns = new_column_names
+
             melted = value_df.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
             melted[['Store', 'Metric Type']] = melted["Store-Metric"].str.split(" - ", expand=True)
             melted["Month"] = sheet
             final_df = melted[['Month', 'Store', 'Metric Type', 'Metric', 'Value']].dropna(subset=["Store", "Metric", "Value"])
             all_data.append(final_df)
-        except:
+        except Exception as e:
+            st.warning(f"⚠️ Could not process sheet '{sheet}' due to error: {e}")
             continue
     if not all_data:
         return pd.DataFrame()
