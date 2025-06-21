@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import openai
+from openai import OpenAI
 import os
 
 st.set_page_config(layout="wide")
 st.title("📊 California Burrito: Store Performance GPT Assistant")
 
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Set this in your env or Streamlit Cloud
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # File upload section
 uploaded_2024 = st.file_uploader("Upload FY 2024–25 Excel", type="xlsx")
@@ -52,7 +52,7 @@ Answer:
 
         with st.spinner("Thinking..."):
             try:
-                response = openai.ChatCompletion.create(
+                response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
