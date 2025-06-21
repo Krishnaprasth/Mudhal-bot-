@@ -1,59 +1,47 @@
 import streamlit as st
 import pandas as pd
-from openai import OpenAI
 import os
 import io
 from fpdf import FPDF
-from PIL import Image
+from openai import OpenAI
 
 st.set_page_config(layout="centered")
-# Use logo from official website (assuming available from their assets)
 st.image("https://www.californiaburrito.in/assets/images/logo.png", width=250)
 st.title("🤖 California Burrito GPT Analyst")
 
-# Upload Excel files
 uploaded_files = st.file_uploader("📁 Upload FY Store Excel files", type="xlsx", accept_multiple_files=True)
 
-# Initialize OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @st.cache_data
-def load_data(file):
+def load_matrix_excel(file):
     xls = pd.ExcelFile(file)
-    df_all = pd.DataFrame()
+    all_data = []
     for sheet in xls.sheet_names:
-        df = xls.parse(sheet)
-        df.columns = [str(c).strip() for c in df.columns]
+        raw_df = xls.parse(sheet, header=None)
 
-        col_map = {}
-        for col in df.columns:
-            lower_col = col.lower()
-            if 'store' in lower_col and 'name' in lower_col:
-                col_map[col] = 'Store Name'
-            elif 'net' in lower_col and 'sales' in lower_col:
-                col_map[col] = 'Net Sales'
-            elif 'gross' in lower_col and 'sales' in lower_col:
-                col_map[col] = 'Gross Sales'
-            elif 'cogs' in lower_col:
-                col_map[col] = 'COGS'
-            elif 'rent' in lower_col:
-                col_map[col] = 'Rent'
-            elif 'aggregator' in lower_col and 'commission' in lower_col:
-                col_map[col] = 'Aggregator commission'
-            elif 'online' in lower_col and 'sales' in lower_col:
-                col_map[col] = 'Online Sales'
-            elif 'ebitda' in lower_col:
-                col_map[col] = 'EBITDA'
+        # Extract merged headers (rows 1 and 2)
+        store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
+        metric_types = raw_df.iloc[2, 3:].astype(str).str.strip()
+        combined_headers = store_names + ' - ' + metric_types
 
-        df.rename(columns=col_map, inplace=True)
+        df = raw_df.iloc[3:, :]
+        df.columns = ['Metric'] + list(combined_headers)
+        df = df.dropna(subset=['Metric'])
+
+        df = df.set_index('Metric').T.reset_index()
+        df[['Store', 'Metric Type']] = df['index'].str.split(' - ', expand=True)
         df['Month'] = sheet
-        df_all = pd.concat([df_all, df], ignore_index=True)
-    return df_all
+        df = df.drop(columns=['index'])
+        all_data.append(df)
+
+    final_df = pd.concat(all_data, ignore_index=True)
+    return final_df
 
 if uploaded_files:
-    df_list = [load_data(file) for file in uploaded_files]
+    df_list = [load_matrix_excel(file) for file in uploaded_files]
     df = pd.concat(df_list, ignore_index=True)
-    st.success("✅ Data successfully loaded")
+    st.success("✅ Data successfully loaded and cleaned")
 
     st.markdown("### 💬 Ask any question about your store data")
     user_question = st.text_area("Type your question below:", height=120)
@@ -68,16 +56,8 @@ if uploaded_files:
         sample_data = sample_df.to_csv(index=False)
 
         prompt = f"""
-You are a senior business analyst specializing in retail and QSR metrics.
-Use the data below to detect trends, highlight anomalies, or surface opportunities.
-
-Your job is to give:
-- Revenue drivers
-- Store-level profit issues
-- Recommendations
-- Growth opportunities
-- Correlation between metrics (like high rent and low EBITDA)
-- DO NOT hallucinate missing months; just say "No data available for that month" if needed
+You are a senior business analyst specializing in QSR and multi-store chains.
+Use the below data to identify trends, anomalies, opportunities, and respond to user queries accurately.
 
 Columns: {schema}
 Sample Data (first 5 rows):
@@ -120,6 +100,5 @@ Answer:
 
             except Exception as e:
                 st.error(f"OpenAI Error: {e}")
-
 else:
     st.info("👆 Please upload at least one Excel file to begin.")
