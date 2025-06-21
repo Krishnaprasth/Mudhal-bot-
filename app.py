@@ -31,11 +31,20 @@ def load_matrix_excel(file):
         try:
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].astype(str).str.strip()
-            min_len = min(len(store_names), len(metric_types))
-            combined_headers = store_names[:min_len] + ' - ' + metric_types[:min_len]
+            combined_headers = store_names + ' - ' + metric_types
 
-            df = raw_df.iloc[3:, :3 + min_len]
-            df.columns = ['Metric'] + list(combined_headers)
+            expected_cols = 1 + len(combined_headers)
+            df = raw_df.iloc[3:, :expected_cols]
+
+            # Ensure shape alignment with header
+            if df.shape[1] != expected_cols:
+                min_len = min(df.shape[1], expected_cols)
+                df = df.iloc[:, :min_len]
+                col_headers = ['Metric'] + list(combined_headers[:min_len - 1])
+            else:
+                col_headers = ['Metric'] + list(combined_headers)
+
+            df.columns = col_headers
             df = df.dropna(subset=['Metric'])
 
             df = df.set_index('Metric').T.reset_index()
