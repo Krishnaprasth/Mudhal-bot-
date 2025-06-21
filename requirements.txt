@@ -6,3 +6,4 @@ fpdf
 openai
 Pillow
 xlsxwriter
+openpyxl
