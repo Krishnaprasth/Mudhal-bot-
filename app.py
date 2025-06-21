@@ -28,11 +28,21 @@ def load_matrix_excel(file):
     for sheet in xls.sheet_names:
         try:
             raw_df = xls.parse(sheet, header=None)
+
+            if raw_df.shape[0] < 4:
+                st.warning(f"⚠️ Skipping sheet '{sheet}' — not enough rows.")
+                continue
+
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
 
-            value_df = raw_df.iloc[3:, 3:3 + len(combined_headers)]
+            expected_columns = len(combined_headers)
+            actual_columns = raw_df.iloc[3:, 3:].shape[1]
+            usable_columns = min(expected_columns, actual_columns)
+
+            combined_headers = combined_headers[:usable_columns]
+            value_df = raw_df.iloc[3:, 3:3 + usable_columns]
             value_df.insert(0, 'Metric', raw_df.iloc[3:, 0])
 
             value_df.columns = ['Metric'] + combined_headers.tolist()
@@ -100,14 +110,14 @@ Answer:
                 st.markdown("### ✅ GPT Answer")
                 st.write(output)
 
-                st.download_button("📅 Download as TXT", data=output, file_name="answer.txt")
+                st.download_button("🗕️ Download as TXT", data=output, file_name="answer.txt")
 
                 excel_data = pd.DataFrame({"GPT Answer": [output]})
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                     excel_data.to_excel(writer, index=False)
                 excel_buffer.seek(0)
-                st.download_button("📅 Download as Excel", data=excel_buffer.read(), file_name="gpt_answer.xlsx")
+                st.download_button("🗕️ Download as Excel", data=excel_buffer.read(), file_name="gpt_answer.xlsx")
 
                 pdf = FPDF()
                 pdf.add_page()
@@ -117,9 +127,9 @@ Answer:
                 pdf_buffer = io.BytesIO()
                 pdf.output(pdf_buffer)
                 pdf_buffer.seek(0)
-                st.download_button("📅 Download as PDF", data=pdf_buffer.read(), file_name="gpt_answer.pdf")
+                st.download_button("🗕️ Download as PDF", data=pdf_buffer.read(), file_name="gpt_answer.pdf")
 
             except Exception as e:
                 st.error(f"OpenAI Error: {e}")
 else:
-    st.info("👆 Please upload at least one Excel file to begin.")
+    st.info("👇 Please upload at least one Excel file to begin.")
