@@ -53,7 +53,7 @@ def load_data(file):
 
         df.rename(columns=col_map, inplace=True)
 
-        if 'Store Name' in df.columns:
+        if 'Store Name' in df.columns or any("store" in c.lower() for c in df.columns):
             df['Month'] = sheet
             df_all = pd.concat([df_all, df], ignore_index=True)
     return df_all
@@ -69,12 +69,15 @@ if uploaded_files:
         store = st.sidebar.selectbox("Select Store", ["All"] + sorted(df[store_col].dropna().unique()))
     else:
         store = "All"
-    month = st.sidebar.selectbox("Select Month", ["All"] + sorted(df['Month'].dropna().unique()))
+    if 'Month' in df.columns:
+        month = st.sidebar.selectbox("Select Month", ["All"] + sorted(df['Month'].dropna().unique()))
+    else:
+        month = "All"
 
     filtered = df.copy()
     if store != "All" and store_col:
         filtered = filtered[filtered[store_col] == store]
-    if month != "All":
+    if month != "All" and 'Month' in filtered.columns:
         filtered = filtered[filtered['Month'] == month]
 
     st.subheader("📈 Explore Raw Data")
