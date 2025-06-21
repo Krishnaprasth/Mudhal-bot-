@@ -25,41 +25,42 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def load_matrix_excel(file):
     xls = pd.ExcelFile(file)
     all_data = []
+
     for sheet in xls.sheet_names:
         try:
             raw_df = xls.parse(sheet, header=None)
+
             if raw_df.shape[0] < 4 or raw_df.shape[1] < 4:
+                st.warning(f"⚠️ Sheet '{sheet}' skipped due to insufficient rows/columns.")
                 continue
 
-            store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
+            store_names = raw_df.iloc[1, 3:].ffill().astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
+
             data_block = raw_df.iloc[3:, 3:]
+            metrics = raw_df.iloc[3:, 0].reset_index(drop=True)
 
-            usable_columns = min(len(combined_headers), data_block.shape[1])
-            combined_headers = combined_headers[:usable_columns]
-            data_block = data_block.iloc[:, :usable_columns]
+            usable_cols = min(len(combined_headers), data_block.shape[1])
+            usable_rows = data_block.shape[0]
 
-            usable_rows = min(len(raw_df.iloc[3:, 0]), data_block.shape[0])
-            data_block = data_block.iloc[:usable_rows, :]
+            data_block = data_block.iloc[:, :usable_cols]
+            headers = combined_headers.iloc[:usable_cols].tolist()
+            data_block.insert(0, 'Metric', metrics.iloc[:usable_rows])
 
-            value_df = data_block.copy()
-            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values[:usable_rows])
+            data_block.columns = ['Metric'] + headers
 
-            new_column_names = ['Metric'] + combined_headers.tolist()
-            if value_df.shape[1] != len(new_column_names):
-                st.warning(f"⚠️ Skipping sheet '{sheet}' — column mismatch between headers and data.")
-                continue
-            value_df.columns = new_column_names
+            melted = data_block.melt(id_vars='Metric', var_name='Store-Metric', value_name='Value')
+            melted[['Store', 'Metric Type']] = melted['Store-Metric'].str.split(' - ', expand=True)
+            melted['Month'] = sheet
 
-            melted = value_df.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
-            melted[['Store', 'Metric Type']] = melted["Store-Metric"].str.split(" - ", expand=True)
-            melted["Month"] = sheet
-            final_df = melted[['Month', 'Store', 'Metric Type', 'Metric', 'Value']].dropna(subset=["Store", "Metric", "Value"])
+            final_df = melted[['Month', 'Store', 'Metric Type', 'Metric', 'Value']]
+            final_df = final_df.dropna(subset=['Store', 'Metric', 'Value'])
             all_data.append(final_df)
+
         except Exception as e:
-            st.warning(f"⚠️ Could not process sheet '{sheet}' due to error: {e}")
-            continue
+            st.warning(f"⚠️ Could not process sheet '{sheet}' due to: {e}")
+
     if not all_data:
         return pd.DataFrame()
     return pd.concat(all_data, ignore_index=True)
