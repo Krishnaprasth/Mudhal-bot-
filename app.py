@@ -19,30 +19,47 @@ def load_matrix_excel(file):
     all_data = []
     for sheet in xls.sheet_names:
         raw_df = xls.parse(sheet, header=None)
+        
+        # Use try-except to handle inconsistent sheet formatting
+        try:
+            store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
+            metric_types = raw_df.iloc[2, 3:].astype(str).str.strip()
+            combined_headers = store_names + ' - ' + metric_types
 
-        # Extract merged headers (rows 1 and 2)
-        store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
-        metric_types = raw_df.iloc[2, 3:].astype(str).str.strip()
-        combined_headers = store_names + ' - ' + metric_types
+            df = raw_df.iloc[3:, :]
+            df = df.reset_index(drop=True)
+            expected_cols = 1 + len(combined_headers)
+            actual_cols = df.shape[1]
+            
+            if actual_cols < expected_cols:
+                # pad columns if necessary
+                for _ in range(expected_cols - actual_cols):
+                    df[actual_cols] = None
+                    actual_cols += 1
 
-        df = raw_df.iloc[3:, :]
-        df.columns = ['Metric'] + list(combined_headers)
-        df = df.dropna(subset=['Metric'])
+            df.columns = ['Metric'] + list(combined_headers)
+            df = df.dropna(subset=['Metric'])
+            df = df.set_index('Metric').T.reset_index()
+            df[['Store', 'Metric Type']] = df['index'].str.split(' - ', expand=True)
+            df['Month'] = sheet
+            df = df.drop(columns=['index'])
+            all_data.append(df)
+        except Exception as e:
+            st.warning(f"⚠️ Could not process sheet '{sheet}' — {str(e)}")
 
-        df = df.set_index('Metric').T.reset_index()
-        df[['Store', 'Metric Type']] = df['index'].str.split(' - ', expand=True)
-        df['Month'] = sheet
-        df = df.drop(columns=['index'])
-        all_data.append(df)
-
+    if not all_data:
+        return pd.DataFrame()
     final_df = pd.concat(all_data, ignore_index=True)
     return final_df
 
 if uploaded_files:
     df_list = [load_matrix_excel(file) for file in uploaded_files]
     df = pd.concat(df_list, ignore_index=True)
-    st.success("✅ Data successfully loaded and cleaned")
+    if df.empty:
+        st.error("🚫 Could not extract data from any sheet. Please verify formatting.")
+        st.stop()
 
+    st.success("✅ Data successfully loaded and cleaned")
     st.markdown("### 💬 Ask any question about your store data")
     user_question = st.text_area("Type your question below:", height=120)
 
@@ -50,7 +67,6 @@ if uploaded_files:
         clean_df = df.dropna(axis=1, how='all')
         clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
         schema = ', '.join(clean_df.columns)
-
         sample_df = clean_df.head(5).copy()
         sample_df = sample_df.applymap(lambda x: str(x)[:100])
         sample_data = sample_df.to_csv(index=False)
