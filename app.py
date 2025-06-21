@@ -29,24 +29,23 @@ def load_matrix_excel(file):
         try:
             raw_df = xls.parse(sheet, header=None)
 
-            if raw_df.shape[0] < 4:
-                st.warning(f"⚠️ Skipping sheet '{sheet}' — not enough rows.")
+            # Basic structural check
+            if raw_df.shape[0] < 4 or raw_df.shape[1] < 4:
+                st.warning(f"⚠️ Skipping sheet '{sheet}' — insufficient rows or columns.")
                 continue
 
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
 
-            expected_columns = len(combined_headers)
             data_block = raw_df.iloc[3:, 3:]
-            actual_columns = data_block.shape[1]
+            usable_columns = min(len(combined_headers), data_block.shape[1])
 
-            usable_columns = min(expected_columns, actual_columns)
             combined_headers = combined_headers[:usable_columns]
             data_block = data_block.iloc[:, :usable_columns]
 
             value_df = data_block.copy()
-            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values)
+            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values[:len(data_block)])
 
             new_column_names = ['Metric'] + combined_headers.tolist()
             if len(new_column_names) != value_df.shape[1]:
