@@ -5,9 +5,17 @@ import io
 from fpdf import FPDF
 from openai import OpenAI
 
-st.set_page_config(layout="centered")
-st.image("https://www.californiaburrito.in/assets/images/logo.png", width=250)
-st.title("🤖 California Burrito GPT Analyst")
+st.set_page_config(layout="centered", page_title="California Burrito Analyst", page_icon="🌯")
+
+# Custom header with brand styling
+st.markdown("""
+    <div style='text-align: center;'>
+        <img src='/mnt/data/cb_dec2020Logo.png' width='280'>
+        <h1 style='font-family: sans-serif; color: #d62828;'>California Burrito GPT Analyst</h1>
+        <p style='font-size: 16px; color: #6c757d;'>Ask your store-level business questions and download insights instantly.</p>
+    </div>
+    <hr style='margin-top:10px;margin-bottom:25px;'>
+""", unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader("📁 Upload FY Store Excel files", type="xlsx", accept_multiple_files=True)
 
@@ -19,8 +27,7 @@ def load_matrix_excel(file):
     all_data = []
     for sheet in xls.sheet_names:
         raw_df = xls.parse(sheet, header=None)
-        
-        # Use try-except to handle inconsistent sheet formatting
+
         try:
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].astype(str).str.strip()
@@ -28,17 +35,9 @@ def load_matrix_excel(file):
 
             df = raw_df.iloc[3:, :]
             df = df.reset_index(drop=True)
-            expected_cols = 1 + len(combined_headers)
-            actual_cols = df.shape[1]
-            
-            if actual_cols < expected_cols:
-                # pad columns if necessary
-                for _ in range(expected_cols - actual_cols):
-                    df[actual_cols] = None
-                    actual_cols += 1
-
             df.columns = ['Metric'] + list(combined_headers)
             df = df.dropna(subset=['Metric'])
+
             df = df.set_index('Metric').T.reset_index()
             df[['Store', 'Metric Type']] = df['index'].str.split(' - ', expand=True)
             df['Month'] = sheet
@@ -60,13 +59,19 @@ if uploaded_files:
         st.stop()
 
     st.success("✅ Data successfully loaded and cleaned")
-    st.markdown("### 💬 Ask any question about your store data")
+
+    st.markdown("""
+    <div style='background-color:#f8f9fa;padding:15px;border-radius:10px;margin-bottom:20px;'>
+        <h4 style='color:#343a40;'>💬 Ask a Question</h4>
+    </div>
+    """, unsafe_allow_html=True)
     user_question = st.text_area("Type your question below:", height=120)
 
     if user_question:
         clean_df = df.dropna(axis=1, how='all')
         clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
         schema = ', '.join(clean_df.columns)
+
         sample_df = clean_df.head(5).copy()
         sample_df = sample_df.applymap(lambda x: str(x)[:100])
         sample_data = sample_df.to_csv(index=False)
@@ -83,7 +88,7 @@ User question: {user_question}
 Answer:
 """
 
-        with st.spinner("Generating insight..."):
+        with st.spinner("🔎 GPT is analyzing your data..."):
             try:
                 response = client.chat.completions.create(
                     model="gpt-4",
