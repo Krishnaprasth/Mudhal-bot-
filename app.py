@@ -30,24 +30,26 @@ def load_matrix_excel(file):
         try:
             raw_df = xls.parse(sheet, header=None)
 
-            if raw_df.shape[0] < 4 or raw_df.shape[1] < 4:
-                st.warning(f"⚠️ Sheet '{sheet}' skipped due to insufficient rows/columns.")
+            # Safely locate where store headers begin (find first non-null in row 1)
+            start_col = raw_df.iloc[1].first_valid_index()
+            if pd.isna(start_col) or raw_df.shape[0] < 5:
+                st.warning(f"⚠️ Sheet '{sheet}' skipped due to missing header info.")
                 continue
 
-            store_names = raw_df.iloc[1, 3:].ffill().astype(str).str.strip()
-            metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
+            store_names = raw_df.iloc[1, start_col:].ffill().astype(str).str.strip()
+            metric_types = raw_df.iloc[2, start_col:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
 
-            data_block = raw_df.iloc[3:, 3:]
-            metrics = raw_df.iloc[3:, 0].reset_index(drop=True)
+            data_block = raw_df.iloc[4:, start_col:]
+            metrics = raw_df.iloc[4:, 0].reset_index(drop=True)
 
             usable_cols = min(len(combined_headers), data_block.shape[1])
             usable_rows = data_block.shape[0]
 
             data_block = data_block.iloc[:, :usable_cols]
             headers = combined_headers.iloc[:usable_cols].tolist()
-            data_block.insert(0, 'Metric', metrics.iloc[:usable_rows])
 
+            data_block.insert(0, 'Metric', metrics.iloc[:usable_rows])
             data_block.columns = ['Metric'] + headers
 
             melted = data_block.melt(id_vars='Metric', var_name='Store-Metric', value_name='Value')
