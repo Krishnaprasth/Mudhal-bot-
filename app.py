@@ -36,14 +36,17 @@ if uploaded_2024 and uploaded_2025:
 
     if user_question:
         schema = ', '.join(df.columns)
-        sample_data = df.head(10).to_csv(index=False)
+
+        sample_df = df.head(5).copy()
+        sample_df = sample_df.applymap(lambda x: str(x)[:100])  # Truncate long text to 100 characters
+        sample_data = sample_df.to_csv(index=False)
 
         prompt = f"""
-You are a data analyst bot for a QSR chain. You are given performance data of multiple stores over different months and years. 
+You are a data analyst bot for a QSR chain. You are given performance data of multiple stores over different months and years.
 Use your reasoning to analyze the data and answer business questions logically and step-by-step.
 
 Columns: {schema}
-Sample Data:
+Sample Data (first 5 rows):
 {sample_data}
 
 Question: {user_question}
