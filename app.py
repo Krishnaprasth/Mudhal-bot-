@@ -7,7 +7,8 @@ from fpdf import FPDF
 from PIL import Image
 
 st.set_page_config(layout="centered")
-st.image("https://upload.wikimedia.org/wikipedia/en/9/91/California_Burrito_logo.png", width=250)
+# Use logo from official website (assuming available from their assets)
+st.image("https://www.californiaburrito.in/assets/images/logo.png", width=250)
 st.title("🤖 California Burrito GPT Analyst")
 
 # Upload Excel files
@@ -76,6 +77,7 @@ Your job is to give:
 - Recommendations
 - Growth opportunities
 - Correlation between metrics (like high rent and low EBITDA)
+- DO NOT hallucinate missing months; just say "No data available for that month" if needed
 
 Columns: {schema}
 Sample Data (first 5 rows):
