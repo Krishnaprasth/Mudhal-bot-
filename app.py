@@ -13,19 +13,6 @@ from io import BytesIO
 st.set_page_config(layout="wide")
 st.title("📊 California Burrito: Store Performance GPT Assistant")
 
-# 🔐 User Authentication
-PASSWORD = "burrito2025"
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    password = st.text_input("Enter password to continue:", type="password")
-    if password == PASSWORD:
-        st.session_state.authenticated = True
-        st.experimental_rerun()
-    else:
-        st.stop()
-
 # 🔢 Upload limit
 MAX_FILES = 3
 uploaded_files = st.file_uploader("Upload up to 3 FY Excel files", type="xlsx", accept_multiple_files=True)
