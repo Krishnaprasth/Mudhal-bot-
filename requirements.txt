@@ -3,6 +3,8 @@ pandas
 openpyxl
 matplotlib
 openai
+pip install fpdf
+
 
 
 
