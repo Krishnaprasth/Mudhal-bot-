@@ -12,7 +12,7 @@ st.markdown("""
     <div style='text-align: center;'>
         <img src='/mnt/data/cb_dec2020Logo.png' width='280'>
         <h1 style='font-family: sans-serif; color: #d62828;'>California Burrito GPT Analyst</h1>
-        <p style='font-size: 16px; color: #6c757d;'>Ask your store-level business questions and download insights instantly.</p>
+        <p style='font-size: 16px; color: #6c757d;'>Ask store-level business questions and get intelligent responses.</p>
     </div>
     <hr style='margin-top:10px;margin-bottom:25px;'>
 """, unsafe_allow_html=True)
@@ -28,41 +28,28 @@ def load_matrix_excel(file):
     for sheet in xls.sheet_names:
         try:
             raw_df = xls.parse(sheet, header=None)
-
-            # Basic structural check
             if raw_df.shape[0] < 4 or raw_df.shape[1] < 4:
-                st.warning(f"⚠️ Skipping sheet '{sheet}' — insufficient rows or columns.")
                 continue
-
             store_names = raw_df.iloc[1, 3:].fillna(method='ffill').astype(str).str.strip()
             metric_types = raw_df.iloc[2, 3:].fillna("").astype(str).str.strip()
             combined_headers = store_names + " - " + metric_types
-
             data_block = raw_df.iloc[3:, 3:]
             usable_columns = min(len(combined_headers), data_block.shape[1])
-
             combined_headers = combined_headers[:usable_columns]
             data_block = data_block.iloc[:, :usable_columns]
-
             value_df = data_block.copy()
             value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values[:len(data_block)])
-
             new_column_names = ['Metric'] + combined_headers.tolist()
             if len(new_column_names) != value_df.shape[1]:
-                st.warning(f"⚠️ Could not process sheet '{sheet}' — Length mismatch: headers={len(new_column_names)}, data cols={value_df.shape[1]}")
                 continue
-
             value_df.columns = new_column_names
             melted = value_df.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
             melted[['Store', 'Metric Type']] = melted["Store-Metric"].str.split(" - ", expand=True)
             melted["Month"] = sheet
             final_df = melted[['Month', 'Store', 'Metric Type', 'Metric', 'Value']].dropna(subset=["Store", "Metric", "Value"])
-
             all_data.append(final_df)
-
-        except Exception as e:
-            st.warning(f"⚠️ Could not process sheet '{sheet}' — {str(e)}")
-
+        except:
+            continue
     if not all_data:
         return pd.DataFrame()
     return pd.concat(all_data, ignore_index=True)
@@ -73,8 +60,6 @@ if uploaded_files:
     if df.empty:
         st.error("🚫 Could not extract data from any sheet. Please verify formatting.")
         st.stop()
-
-    st.success("✅ Data successfully loaded and cleaned")
 
     st.markdown("""
     <div style='background-color:#f8f9fa;padding:15px;border-radius:10px;margin-bottom:20px;'>
@@ -87,11 +72,9 @@ if uploaded_files:
         clean_df = df.dropna(axis=1, how='all')
         clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
         schema = ', '.join(clean_df.columns)
-
         sample_df = clean_df.head(5).copy()
         sample_df = sample_df.applymap(lambda x: str(x)[:100])
         sample_data = sample_df.to_csv(index=False)
-
         prompt = f"""
 You are a senior business analyst specializing in QSR and multi-store chains.
 Use the below data to identify trends, anomalies, opportunities, and respond to user queries accurately.
@@ -103,7 +86,6 @@ Sample Data (first 5 rows):
 User question: {user_question}
 Answer:
 """
-
         with st.spinner("🔎 GPT is analyzing your data..."):
             try:
                 response = client.chat.completions.create(
