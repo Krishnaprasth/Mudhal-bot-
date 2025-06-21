@@ -13,11 +13,28 @@ from io import BytesIO
 st.set_page_config(layout="wide")
 st.title("📊 California Burrito: Store Performance GPT Assistant")
 
+# 🔐 User Authentication
+PASSWORD = "burrito2025"
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    password = st.text_input("Enter password to continue:", type="password")
+    if password == PASSWORD:
+        st.session_state.authenticated = True
+        st.experimental_rerun()
+    else:
+        st.stop()
+
+# 🔢 Upload limit
+MAX_FILES = 3
+uploaded_files = st.file_uploader("Upload up to 3 FY Excel files", type="xlsx", accept_multiple_files=True)
+if uploaded_files and len(uploaded_files) > MAX_FILES:
+    st.error(f"🚫 Upload limit exceeded! Only {MAX_FILES} files allowed.")
+    st.stop()
+
 # 🔑 Set up OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# 🔁 File upload section (multi-file)
-uploaded_files = st.file_uploader("Upload one or more FY Excel files", type="xlsx", accept_multiple_files=True)
 
 @st.cache_data
 def load_data(file):
@@ -27,7 +44,6 @@ def load_data(file):
         df = xls.parse(sheet)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Normalize critical column names
         col_map = {}
         for col in df.columns:
             lower_col = col.lower()
@@ -47,6 +63,7 @@ def load_data(file):
                 col_map[col] = 'Online Sales'
             elif 'ebitda' in lower_col:
                 col_map[col] = 'EBITDA'
+
         df.rename(columns=col_map, inplace=True)
 
         if 'Store Name' in df.columns:
@@ -60,12 +77,16 @@ if uploaded_files:
     st.success("✅ Data successfully loaded")
 
     st.sidebar.header("🔍 Smart Filters")
-    store = st.sidebar.selectbox("Select Store", ["All"] + sorted(df['Store Name'].dropna().unique()))
+    store_col = next((col for col in df.columns if 'store' in col.lower()), None)
+    if store_col:
+        store = st.sidebar.selectbox("Select Store", ["All"] + sorted(df[store_col].dropna().unique()))
+    else:
+        store = "All"
     month = st.sidebar.selectbox("Select Month", ["All"] + sorted(df['Month'].dropna().unique()))
 
     filtered = df.copy()
-    if store != "All":
-        filtered = filtered[filtered['Store Name'] == store]
+    if store != "All" and store_col:
+        filtered = filtered[filtered[store_col] == store]
     if month != "All":
         filtered = filtered[filtered['Month'] == month]
 
@@ -95,29 +116,25 @@ if uploaded_files:
     if 'EBITDA' in filtered.columns:
         st.metric("Avg EBITDA", f"₹{filtered['EBITDA'].mean():,.0f}")
 
-    # 🔥 COGS % Heatmap
     if 'COGS %' in df.columns:
         st.subheader("🔥 COGS % Heatmap")
-        heatmap_df = df.dropna(subset=['Store Name', 'Month', 'COGS', 'Net Sales']).copy()
+        heatmap_df = df.dropna(subset=[store_col, 'Month', 'COGS', 'Net Sales']).copy()
         heatmap_df['COGS %'] = (heatmap_df['COGS'] / heatmap_df['Net Sales']) * 100
-        pivot = heatmap_df.pivot_table(index="Store Name", columns="Month", values="COGS %")
+        pivot = heatmap_df.pivot_table(index=store_col, columns="Month", values="COGS %")
         fig, ax = plt.subplots(figsize=(12, 8))
         sns.heatmap(pivot, annot=True, fmt=".1f", cmap="Reds", ax=ax)
         st.pyplot(fig)
 
-    # 🥇 Ranking Stores by Net Sales
-    if "Store Name" in df.columns and "Net Sales" in df.columns:
+    if store_col in df.columns and "Net Sales" in df.columns:
         st.subheader("🏆 Top Performing Stores by Revenue")
-        top_rev = df.groupby("Store Name")["Net Sales"].sum().sort_values(ascending=False).head(10)
+        top_rev = df.groupby(store_col)["Net Sales"].sum().sort_values(ascending=False).head(10)
         st.bar_chart(top_rev)
 
-    # 🧮 Ranking by EBITDA
     if "EBITDA" in df.columns:
         st.subheader("💰 Stores Ranked by EBITDA")
-        top_ebitda = df.groupby("Store Name")["EBITDA"].sum().sort_values(ascending=False)
+        top_ebitda = df.groupby(store_col)["EBITDA"].sum().sort_values(ascending=False)
         st.bar_chart(top_ebitda.head(10))
 
-    # 🤖 Ask GPT
     st.subheader("🤖 Ask any question about store performance")
     user_question = st.text_input("Enter your complex question below:")
 
@@ -205,4 +222,3 @@ Answer:
     """)
 else:
     st.warning("Please upload one or more FY Excel files.")
-    
