@@ -22,42 +22,37 @@ uploaded_files = st.file_uploader("📁 Upload FY Store Excel files", type="xlsx
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @st.cache_data
+
 def load_matrix_excel(file):
     xls = pd.ExcelFile(file)
     all_data = []
 
     for sheet in xls.sheet_names:
         try:
-            raw_df = xls.parse(sheet, header=None)
+            df_raw = xls.parse(sheet, header=None)
 
-            # Safely locate where store headers begin (find first non-null in row 1)
-            start_col = raw_df.iloc[1].first_valid_index()
-            if pd.isna(start_col) or raw_df.shape[0] < 5:
-                st.warning(f"⚠️ Sheet '{sheet}' skipped due to missing header info.")
+            # Find where the header block begins
+            header_row_candidates = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("(?i)Metric", na=False)].index
+            if header_row_candidates.empty:
+                st.warning(f"⚠️ Sheet '{sheet}' skipped due to missing recognizable header row.")
                 continue
+            header_row_idx = header_row_candidates[0]
 
-            store_names = raw_df.iloc[1, start_col:].ffill().astype(str).str.strip()
-            metric_types = raw_df.iloc[2, start_col:].fillna("").astype(str).str.strip()
-            combined_headers = store_names + " - " + metric_types
+            store_names = df_raw.iloc[header_row_idx + 1].ffill().astype(str).str.strip()
+            metric_types = df_raw.iloc[header_row_idx + 2].fillna("").astype(str).str.strip()
+            headers = store_names + " - " + metric_types
 
-            data_block = raw_df.iloc[4:, start_col:]
-            metrics = raw_df.iloc[4:, 0].reset_index(drop=True)
+            metric_column = df_raw.iloc[header_row_idx + 3 :, 0].reset_index(drop=True)
+            data_block = df_raw.iloc[header_row_idx + 3 :, 1 : 1 + len(headers)]
+            data_block.columns = headers[:data_block.shape[1]]
+            data_block.insert(0, "Metric", metric_column)
 
-            usable_cols = min(len(combined_headers), data_block.shape[1])
-            usable_rows = data_block.shape[0]
+            melted = data_block.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
+            melted[["Store", "Metric Type"]] = melted["Store-Metric"].str.split(" - ", expand=True)
+            melted["Month"] = sheet
 
-            data_block = data_block.iloc[:, :usable_cols]
-            headers = combined_headers.iloc[:usable_cols].tolist()
-
-            data_block.insert(0, 'Metric', metrics.iloc[:usable_rows])
-            data_block.columns = ['Metric'] + headers
-
-            melted = data_block.melt(id_vars='Metric', var_name='Store-Metric', value_name='Value')
-            melted[['Store', 'Metric Type']] = melted['Store-Metric'].str.split(' - ', expand=True)
-            melted['Month'] = sheet
-
-            final_df = melted[['Month', 'Store', 'Metric Type', 'Metric', 'Value']]
-            final_df = final_df.dropna(subset=['Store', 'Metric', 'Value'])
+            final_df = melted[["Month", "Store", "Metric Type", "Metric", "Value"]]
+            final_df = final_df.dropna(subset=["Store", "Metric", "Value"])
             all_data.append(final_df)
 
         except Exception as e:
