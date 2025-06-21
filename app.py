@@ -38,15 +38,22 @@ def load_matrix_excel(file):
             combined_headers = store_names + " - " + metric_types
 
             expected_columns = len(combined_headers)
-            actual_columns = raw_df.iloc[3:, 3:].shape[1]
+            data_block = raw_df.iloc[3:, 3:]
+            actual_columns = data_block.shape[1]
+
             usable_columns = min(expected_columns, actual_columns)
-
             combined_headers = combined_headers[:usable_columns]
-            value_df = raw_df.iloc[3:, 3:3 + usable_columns]
-            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0])
+            data_block = data_block.iloc[:, :usable_columns]
 
-            value_df.columns = ['Metric'] + combined_headers.tolist()
+            value_df = data_block.copy()
+            value_df.insert(0, 'Metric', raw_df.iloc[3:, 0].values)
 
+            new_column_names = ['Metric'] + combined_headers.tolist()
+            if len(new_column_names) != value_df.shape[1]:
+                st.warning(f"⚠️ Could not process sheet '{sheet}' — Length mismatch: headers={len(new_column_names)}, data cols={value_df.shape[1]}")
+                continue
+
+            value_df.columns = new_column_names
             melted = value_df.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
             melted[['Store', 'Metric Type']] = melted["Store-Metric"].str.split(" - ", expand=True)
             melted["Month"] = sheet
