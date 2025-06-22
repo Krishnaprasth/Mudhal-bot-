@@ -1,89 +1,76 @@
 import streamlit as st
 import pandas as pd
-import os
 import io
 from fpdf import FPDF
 from openai import OpenAI
 
 st.set_page_config(layout="centered", page_title="California Burrito Analyst", page_icon="🌯")
 
-# Custom header with brand styling
+# Logo and Title
 st.markdown("""
     <div style='text-align: center;'>
-        <img src='/mnt/data/cb_dec2020Logo.png' width='280'>
+        <img src='https://www.californiaburrito.in/assets/img/logo.svg' width='220'>
         <h1 style='font-family: sans-serif; color: #d62828;'>California Burrito GPT Analyst</h1>
         <p style='font-size: 16px; color: #6c757d;'>Ask store-level business questions and get intelligent responses.</p>
     </div>
     <hr style='margin-top:10px;margin-bottom:25px;'>
 """, unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader("📁 Upload FY Store Excel files", type="xlsx", accept_multiple_files=True)
+# File upload
+uploaded_files = st.file_uploader("📁 Upload Monthly Store Data (All Months in Sheets)", type="xlsx", accept_multiple_files=True)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-@st.cache_data
-
-def load_matrix_excel(file):
-    xls = pd.ExcelFile(file)
-    all_data = []
-
-    for sheet in xls.sheet_names:
-        try:
-            df_raw = xls.parse(sheet, header=None)
-
-            # Find where the header block begins
-            header_row_candidates = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("(?i)Metric", na=False)].index
-            if header_row_candidates.empty:
-                st.warning(f"⚠️ Sheet '{sheet}' skipped due to missing recognizable header row.")
-                continue
-            header_row_idx = header_row_candidates[0]
-
-            store_names = df_raw.iloc[header_row_idx + 1].ffill().astype(str).str.strip()
-            metric_types = df_raw.iloc[header_row_idx + 2].fillna("").astype(str).str.strip()
-            headers = store_names + " - " + metric_types
-
-            metric_column = df_raw.iloc[header_row_idx + 3 :, 0].reset_index(drop=True)
-            data_block = df_raw.iloc[header_row_idx + 3 :, 1 : 1 + len(headers)]
-            data_block.columns = headers[:data_block.shape[1]]
-            data_block.insert(0, "Metric", metric_column)
-
-            melted = data_block.melt(id_vars="Metric", var_name="Store-Metric", value_name="Value")
-            melted[["Store", "Metric Type"]] = melted["Store-Metric"].str.split(" - ", expand=True)
-            melted["Month"] = sheet
-
-            final_df = melted[["Month", "Store", "Metric Type", "Metric", "Value"]]
-            final_df = final_df.dropna(subset=["Store", "Metric", "Value"])
-            all_data.append(final_df)
-
-        except Exception as e:
-            st.warning(f"⚠️ Could not process sheet '{sheet}' due to: {e}")
-
-    if not all_data:
+@st.cache_data(show_spinner=False)
+def load_all_sheets_as_long_df(files):
+    final_df = []
+    for file in files:
+        xls = pd.ExcelFile(file)
+        for sheet_name in xls.sheet_names:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                first_store_row_idx = df[df.iloc[:, 0].astype(str).str.match(r'^[A-Z]{3,4}$')].index
+                if len(first_store_row_idx) == 0:
+                    st.warning(f"⚠️ Sheet '{sheet_name}' skipped due to missing store name rows.")
+                    continue
+                start_row = first_store_row_idx[0]
+                df.columns = df.iloc[start_row - 1]
+                df = df[start_row:]
+                df['Month'] = sheet_name
+                final_df.append(df)
+            except Exception as e:
+                st.warning(f"⚠️ Sheet '{sheet_name}' skipped: {e}")
+    if final_df:
+        return pd.concat(final_df, ignore_index=True)
+    else:
         return pd.DataFrame()
-    return pd.concat(all_data, ignore_index=True)
 
 if uploaded_files:
-    df_list = [load_matrix_excel(file) for file in uploaded_files]
-    df = pd.concat(df_list, ignore_index=True)
-    if df.empty:
+    with st.spinner("🔄 Processing uploaded Excel files..."):
+        long_df = load_all_sheets_as_long_df(uploaded_files)
+
+    if long_df.empty:
         st.error("🚫 Could not extract data from any sheet. Please verify formatting.")
-        st.stop()
+    else:
+        st.success("✅ Data parsed and consolidated successfully!")
 
-    st.markdown("""
-    <div style='background-color:#f8f9fa;padding:15px;border-radius:10px;margin-bottom:20px;'>
-        <h4 style='color:#343a40;'>💬 Ask a Question</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    user_question = st.text_area("Type your question below:", height=120)
+        # Show Q&A interface
+        st.markdown("""
+        <div style='background-color:#f8f9fa;padding:15px;border-radius:10px;margin-bottom:20px;'>
+            <h4 style='color:#343a40;'>💬 Ask a Question</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        user_question = st.text_area("Type your question below:", height=120)
 
-    if user_question:
-        clean_df = df.dropna(axis=1, how='all')
-        clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
-        schema = ', '.join(clean_df.columns)
-        sample_df = clean_df.head(5).copy()
-        sample_df = sample_df.applymap(lambda x: str(x)[:100])
-        sample_data = sample_df.to_csv(index=False)
-        prompt = f"""
+        if user_question:
+            clean_df = long_df.dropna(axis=1, how='all')
+            clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
+            schema = ', '.join(clean_df.columns.astype(str))
+            sample_df = clean_df.head(5).copy()
+            sample_df = sample_df.applymap(lambda x: str(x)[:100])
+            sample_data = sample_df.to_csv(index=False)
+
+            prompt = f"""
 You are a senior business analyst specializing in QSR and multi-store chains.
 Use the below data to identify trends, anomalies, opportunities, and respond to user queries accurately.
 
@@ -94,38 +81,38 @@ Sample Data (first 5 rows):
 User question: {user_question}
 Answer:
 """
-        with st.spinner("🔎 GPT is analyzing your data..."):
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=1500
-                )
-                output = response.choices[0].message.content
-                st.markdown("### ✅ GPT Answer")
-                st.write(output)
+            with st.spinner("🔎 GPT is analyzing your data..."):
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.3,
+                        max_tokens=1500
+                    )
+                    output = response.choices[0].message.content
+                    st.markdown("### ✅ GPT Answer")
+                    st.write(output)
 
-                st.download_button("🗕️ Download as TXT", data=output, file_name="answer.txt")
+                    st.download_button("🗕️ Download as TXT", data=output, file_name="answer.txt")
 
-                excel_data = pd.DataFrame({"GPT Answer": [output]})
-                excel_buffer = io.BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                    excel_data.to_excel(writer, index=False)
-                excel_buffer.seek(0)
-                st.download_button("🗕️ Download as Excel", data=excel_buffer.read(), file_name="gpt_answer.xlsx")
+                    excel_data = pd.DataFrame({"GPT Answer": [output]})
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        excel_data.to_excel(writer, index=False)
+                    excel_buffer.seek(0)
+                    st.download_button("🗕️ Download as Excel", data=excel_buffer.read(), file_name="gpt_answer.xlsx")
 
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", size=12)
-                for line in output.split('\n'):
-                    pdf.multi_cell(0, 10, line)
-                pdf_buffer = io.BytesIO()
-                pdf.output(pdf_buffer)
-                pdf_buffer.seek(0)
-                st.download_button("🗕️ Download as PDF", data=pdf_buffer.read(), file_name="gpt_answer.pdf")
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", size=12)
+                    for line in output.split('\n'):
+                        pdf.multi_cell(0, 10, line)
+                    pdf_buffer = io.BytesIO()
+                    pdf.output(pdf_buffer)
+                    pdf_buffer.seek(0)
+                    st.download_button("🗕️ Download as PDF", data=pdf_buffer.read(), file_name="gpt_answer.pdf")
 
-            except Exception as e:
-                st.error(f"OpenAI Error: {e}")
+                except Exception as e:
+                    st.error(f"OpenAI Error: {e}")
 else:
-    st.info("👇 Please upload at least one Excel file to begin.")
+    st.info("👇 Please upload your raw Excel files (monthly sheets) to begin.")
