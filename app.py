@@ -23,36 +23,33 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data(show_spinner=False)
 def load_all_sheets_as_long_df(files):
-    final_df = []
+    all_data = []
     for file in files:
         xls = pd.ExcelFile(file)
         for sheet_name in xls.sheet_names:
             try:
-                df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
-                first_header_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains("sales")].index.min() - 1
-                df.columns = df.iloc[first_header_row]
-                df = df[first_header_row + 1:]
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=0)
+                df = df.loc[:df[df.iloc[:, 0].astype(str).str.lower().str.contains("store ebitda")].index[0]]
+                df = df.dropna(how='all')
 
-                # Remove percentage columns and keep only value columns
-                value_columns = [col for i, col in enumerate(df.columns) if i % 2 != 0]
-                value_columns = [col for col in value_columns if pd.notnull(col)]
+                # Drop percentage columns
+                df = df.loc[:, ~df.columns.astype(str).str.contains("%", case=False)]
 
-                df = df[value_columns]
-                df.insert(0, "Store", value_columns)
-                df = df.T
-                df.columns = df.iloc[0]
-                df = df.drop(df.index[0])
-                df.reset_index(inplace=True)
-                df.rename(columns={"index": "Store"}, inplace=True)
+                # Melt the DataFrame to long format
+                metric_col = df.columns[0]
+                df = df.melt(id_vars=[metric_col], var_name="Store", value_name="Value")
+
+                # Remove 'Total' column if present
+                df = df[df["Store"].str.lower() != "total"]
+
+                df.rename(columns={metric_col: "Metric"}, inplace=True)
                 df["Month"] = sheet_name
 
-                # Filter out 'Total' rows
-                df = df[df["Store"].str.lower() != "total"]
-                final_df.append(df)
+                all_data.append(df)
             except Exception as e:
                 st.warning(f"⚠️ Sheet '{sheet_name}' skipped: {e}")
-    if final_df:
-        return pd.concat(final_df, ignore_index=True)
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
     else:
         return pd.DataFrame()
 
