@@ -22,39 +22,43 @@ uploaded_files = st.file_uploader("📁 Upload Monthly Store Data (All Months in
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data(show_spinner=False)
-def normalize_excel(files):
-    all_data = []
+def load_all_sheets_as_long_df(files):
+    final_df = []
     for file in files:
-        xl = pd.ExcelFile(file)
-        for sheet in xl.sheet_names:
+        xls = pd.ExcelFile(file)
+        for sheet_name in xls.sheet_names:
             try:
-                df = pd.read_excel(xl, sheet_name=sheet, header=None)
-                df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
-                metrics = df.iloc[:, 0]
-                df = df.iloc[:, 1:]
-                columns = df.shape[1]
-                for i in range(0, columns, 2):
-                    if i + 1 >= columns:
-                        continue
-                    store_name = df.iloc[0, i]
-                    amount_col = df.iloc[1:, i].reset_index(drop=True)
-                    percent_col = df.iloc[1:, i + 1].reset_index(drop=True)
-                    metric_names = metrics.iloc[1:].reset_index(drop=True)
-                    temp_df = pd.DataFrame({
-                        "Month": sheet,
-                        "Store": store_name,
-                        "Metric": metric_names,
-                        "Amount": amount_col,
-                        "Percent of Net Sales": percent_col
-                    })
-                    all_data.append(temp_df)
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                first_header_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains("sales")].index.min() - 1
+                df.columns = df.iloc[first_header_row]
+                df = df[first_header_row + 1:]
+
+                # Remove percentage columns and keep only value columns
+                value_columns = [col for i, col in enumerate(df.columns) if i % 2 != 0]
+                value_columns = [col for col in value_columns if pd.notnull(col)]
+
+                df = df[value_columns]
+                df.insert(0, "Store", value_columns)
+                df = df.T
+                df.columns = df.iloc[0]
+                df = df.drop(df.index[0])
+                df.reset_index(inplace=True)
+                df.rename(columns={"index": "Store"}, inplace=True)
+                df["Month"] = sheet_name
+
+                # Filter out 'Total' rows
+                df = df[df["Store"].str.lower() != "total"]
+                final_df.append(df)
             except Exception as e:
-                st.warning(f"⚠️ Sheet '{sheet}' skipped: {e}")
-    return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
+                st.warning(f"⚠️ Sheet '{sheet_name}' skipped: {e}")
+    if final_df:
+        return pd.concat(final_df, ignore_index=True)
+    else:
+        return pd.DataFrame()
 
 if uploaded_files:
     with st.spinner("🔄 Processing uploaded Excel files..."):
-        long_df = normalize_excel(uploaded_files)
+        long_df = load_all_sheets_as_long_df(uploaded_files)
 
     if long_df.empty:
         st.error("🚫 Could not extract data from any sheet. Please verify formatting.")
@@ -70,7 +74,7 @@ if uploaded_files:
         user_question = st.text_area("Type your question below:", height=120)
 
         if user_question:
-            clean_df = long_df.dropna(how='all', axis=1)
+            clean_df = long_df.dropna(axis=1, how='all')
             clean_df = clean_df.loc[:, ~clean_df.columns.astype(str).str.contains("Unnamed", case=False)]
             schema = ', '.join(clean_df.columns.astype(str))
             sample_df = clean_df.head(5).copy()
@@ -122,4 +126,4 @@ Answer:
                 except Exception as e:
                     st.error(f"OpenAI Error: {e}")
 else:
-    st.info("👇 Please upload your original Excel files (monthly sheets) to begin.")
+    st.info("📏 Please upload your raw Excel files (monthly sheets) to begin.")
