@@ -25,6 +25,19 @@ except Exception as e:
     st.error("Data pivoting failed. Please check if the raw CSV is clean.")
     st.stop()
 
+def robust_month_match(query, valid_months):
+    for m in valid_months:
+        if m.lower().replace(" ", "") in query.lower().replace(" ", ""):
+            return m
+    try:
+        parsed = parser.parse(query, fuzzy=True)
+        fallback = parsed.strftime("%b %y")
+        if fallback in valid_months:
+            return fallback
+    except:
+        return None
+    return None
+
 api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
 client = OpenAI(api_key=api_key)
 
@@ -50,15 +63,8 @@ if query:
         def normalize(text):
             return re.sub(r"[^a-z0-9]", "", text.lower())
 
-        def month_in_query(query):
-            try:
-                parsed = parser.parse(query, fuzzy=True)
-                return parsed.strftime("%b %y")
-            except:
-                return None
-
-        parsed_month = month_in_query(query)
-        query_months = [parsed_month] if parsed_month in months else []
+        parsed_month = robust_month_match(query, months)
+        query_months = [parsed_month] if parsed_month else []
         query_norm = normalize(query)
         query_stores = [s for s in stores if normalize(s) in query_norm]
 
