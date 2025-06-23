@@ -19,6 +19,16 @@ Apr 24,ITPL,CAM,0.0
 Apr 24,ITPL,Aggregator commission,153491.86
 Apr 24,ITPL,Marketing & advertisement,105453.5
 Apr 24,ITPL,Other opex expenses,466223.195
+Dec 24,EGL,Gross Sales,1530000.0
+Dec 24,EGL,Net Sales,1450000.0
+Dec 24,EGL,COGS (food +packaging),550000.0
+Dec 24,EGL,Gross margin,900000.0
+Dec 24,EGL,store Labor Cost,275000.0
+Dec 24,EGL,Utility Cost,85000.0
+Dec 24,EGL,CAM,5000.0
+Dec 24,EGL,Aggregator commission,20000.0
+Dec 24,EGL,Marketing & advertisement,25000.0
+Dec 24,EGL,Other opex expenses,135000.0
 ..."""
 
 import streamlit as st
@@ -46,49 +56,34 @@ if "qa_history" not in st.session_state:
     st.session_state.qa_history = []
 
 if query:
-    if query.strip().lower() == "which store has the highest revenue":
-        df_clean = df.dropna(subset=["Net Sales"])
-        store_revenue = df_clean.groupby("Store")["Net Sales"].sum()
-        top_store = store_revenue.idxmax()
-        result = f"🏆 Store with highest revenue: **{top_store}** with ₹{store_revenue[top_store]:,.0f}"
-        st.success(result)
-        fig, ax = plt.subplots()
-        store_revenue.sort_values().plot(kind="barh", ax=ax)
-        ax.set_title("Net Sales by Store")
-        st.pyplot(fig)
-        csv_download = store_revenue.reset_index().to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Revenue Data", csv_download, file_name="store_revenue.csv", mime="text/csv")
-        st.session_state.qa_history.append((query, result))
-    else:
-        try:
-            df_head_str = df.head(10).to_string(index=False)
-            user_message = f"DataFrame Preview:\n{df_head_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+    try:
+        df_str = df.to_string(index=False)
+        user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
 
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=0.1
-            )
-            answer = response.choices[0].message.content
-            st.markdown(answer)
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1
+        )
+        answer = response.choices[0].message.content
+        st.markdown(answer)
 
-            # Try plotting logic if table present in the answer
-            if "|" in answer:
-                import io
-                df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
-                if len(df_temp.columns) >= 2:
-                    fig2, ax2 = plt.subplots()
-                    df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
-                    ax2.set_title("Chart Based on Answer")
-                    st.pyplot(fig2)
-                    st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+        if "|" in answer:
+            import io
+            df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
+            if len(df_temp.columns) >= 2:
+                fig2, ax2 = plt.subplots()
+                df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
+                ax2.set_title("Chart Based on Answer")
+                st.pyplot(fig2)
+                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
 
-            st.session_state.qa_history.append((query, answer))
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+        st.session_state.qa_history.append((query, answer))
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
 
 with st.sidebar:
     st.markdown("### 🔁 Q&A History")
