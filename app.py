@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import openai
+from tabulate import tabulate
 from io import BytesIO
 
 st.set_page_config(layout="centered")
@@ -10,6 +11,9 @@ st.markdown("""
         header, footer {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
+
+# ✅ Use OpenAI API Key from Streamlit secrets
+client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data
 def load_data():
@@ -40,19 +44,15 @@ with st.sidebar:
         st.markdown(f"**{i}. {q}**")
         st.markdown(f"➤ {a[:500]}" if isinstance(a, str) else "➤ [table response]")
 
-openai_api_key = st.text_input("", placeholder="Enter your OpenAI API Key", type="password")
+user_query = st.chat_input("Ask your store performance question")
 
-if openai_api_key:
-    openai.api_key = openai_api_key
-    user_query = st.chat_input("Ask your store performance question")
-
-    if user_query:
-        with st.spinner("Analyzing..."):
-            try:
-                prompt = f"""
+if user_query:
+    with st.spinner("Analyzing..."):
+        try:
+            prompt = f"""
 You are a data analyst for a QSR chain. Given this DataFrame schema:
 
-{df_pivot.head().to_markdown(index=False)}
+{tabulate(df_pivot.head(), headers='keys', tablefmt='github', showindex=False)}
 
 User asked: "{user_query}"
 
@@ -60,18 +60,18 @@ Write a concise, relevant summary using data logic or suggest a pandas filter to
 Do not assume facts not in the table. Prefer short tabular answers when applicable.
 """
 
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful data analyst."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.2,
-                )
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful data analyst."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+            )
 
-                answer = response.choices[0].message['content']
-                st.markdown(answer)
-                st.session_state.qa_history.append((user_query, answer))
+            answer = response.choices[0].message.content
+            st.markdown(answer)
+            st.session_state.qa_history.append((user_query, answer))
 
-            except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+        except Exception as e:
+            st.error(f"⚠️ Error: {e}")
