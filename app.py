@@ -13,7 +13,9 @@ def load_data():
 df_raw = load_data()
 
 # Fix Month formatting like '24-Apr' → 'Apr 24'
-df_raw['Month'] = pd.to_datetime(df_raw['Month'], errors='coerce').dt.strftime('%b %y')
+df_raw['Month'] = pd.to_datetime(df_raw['Month'], dayfirst=False, errors='coerce')
+df_raw['Month'] = df_raw['Month'].dt.strftime('%b %y')
+df_raw = df_raw[df_raw['Month'].notna()]
 df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]
 
 try:
@@ -92,7 +94,7 @@ if query:
                             df_output = filtered_df
                         st.markdown(f"### 🔍 {keyword.title()} Result")
                         st.dataframe(df_output, use_container_width=True)
-                        st.download_button("📥 Download as CSV", df_output.to_csv(index=False), file_name=filename)
+                        st.download_button("📅 Download as CSV", df_output.to_csv(index=False), file_name=filename)
                         st.session_state.qa_history.append((query, df_output.to_markdown(index=False)))
                         response_shown = True
                     except Exception as e:
@@ -122,7 +124,7 @@ if query:
                             df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
                             ax2.set_title("Visual Summary")
                             st.pyplot(fig2)
-                            st.download_button("📥 Download Answer CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+                            st.download_button("📅 Download Answer CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
                     except: pass
 
                 st.session_state.qa_history.append((query, answer))
