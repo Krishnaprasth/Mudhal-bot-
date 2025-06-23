@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from openai import OpenAI
 from io import StringIO
 import re
+from dateutil import parser
 
 @st.cache_data
 def load_data():
@@ -49,8 +50,16 @@ if query:
         def normalize(text):
             return re.sub(r"[^a-z0-9]", "", text.lower())
 
+        def month_in_query(query):
+            try:
+                parsed = parser.parse(query, fuzzy=True)
+                return parsed.strftime("%b %y")
+            except:
+                return None
+
+        parsed_month = month_in_query(query)
+        query_months = [parsed_month] if parsed_month in months else []
         query_norm = normalize(query)
-        query_months = [m for m in months if normalize(m) in query_norm or normalize(m).replace(" ", "") in query_norm]
         query_stores = [s for s in stores if normalize(s) in query_norm]
 
         filtered_df = df.copy()
