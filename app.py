@@ -11,9 +11,8 @@ def load_data():
     return pd.read_csv(StringIO(csv_data))
 
 df_raw = load_data()
-df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]  # Ensure no missing metrics or values
+df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]
 
-# Pivot to structured DataFrame
 try:
     df = df_raw.pivot_table(index=['Month', 'Store'], columns='Metric', values='Amount').reset_index()
 except Exception as e:
@@ -40,7 +39,7 @@ if query:
             return re.sub(r"[^a-z0-9]", "", text.lower())
 
         query_norm = normalize(query)
-        query_months = [m for m in months if normalize(m) in query_norm]
+        query_months = [m for m in months if normalize(m) in query_norm or normalize(m).replace(" ", "") in query_norm]
         query_stores = [s for s in stores if normalize(s) in query_norm]
 
         filtered_df = df.copy()
