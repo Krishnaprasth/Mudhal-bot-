@@ -49,41 +49,66 @@ if query:
         if query_stores:
             filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
 
-        # Avoid data overload if no filtering
         if not query_months and not query_stores:
             filtered_df = filtered_df.head(200)
 
         if filtered_df.empty:
             st.warning("No data found matching the filters in your question. Please check store/month spelling.")
         else:
-            df_str = filtered_df.fillna(0).to_string(index=False)
-            user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+            response_shown = False
 
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=0.1
-            )
-            answer = response.choices[0].message.content
-            st.markdown(answer)
+            logic_blocks = [
+                ("highest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].max()][['Month', 'Store', 'Gross Sales']], "top_store_sales.csv"),
+                ("lowest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].min()][['Month', 'Store', 'Gross Sales']], "lowest_store_sales.csv"),
+                ("highest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.max()")[["Month", "Store", "EBITDA"]], "top_ebitda.csv"),
+                ("lowest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.min()")[["Month", "Store", "EBITDA"]], "lowest_ebitda.csv"),
+                ("highest margin", lambda df: df.assign(**{"Margin %": 100 * df['Gross margin'] / df['Net Sales']}).query("`Margin %` == `Margin %`.max()")[["Month", "Store", "Margin %"]], "top_margin.csv"),
+                ("lowest margin", lambda df: df.assign(**{"Margin %": 100 * df['Gross margin'] / df['Net Sales']}).query("`Margin %` == `Margin %`.min()")[["Month", "Store", "Margin %"]], "lowest_margin.csv"),
+                ("rent trend", lambda df: df.groupby("Month")["Rent"].sum().reset_index(), "monthly_rent_trend.csv"),
+                ("cost breakdown", lambda df: df[["Store", "COGS (food +packaging)", "store Labor Cost", "Utility Cost", "Marketing & advertisement", "Other opex expenses"]].groupby("Store").sum().reset_index(), "cost_breakdown.csv"),
+                ("ebitda trend", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).groupby("Month")["EBITDA"].sum().reset_index(), "ebitda_trend.csv"),
+                ("gross sales trend", lambda df: df.groupby("Month")["Gross Sales"].sum().reset_index(), "gross_sales_trend.csv")
+            ]
 
-            if "|" in answer:
-                import io
-                try:
-                    df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
-                    if len(df_temp.columns) >= 2:
-                        fig2, ax2 = plt.subplots()
-                        df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
-                        ax2.set_title("Chart Based on Answer")
-                        st.pyplot(fig2)
-                        st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
-                except:
-                    pass
+            for keyword, logic_fn, filename in logic_blocks:
+                if not response_shown and all(k in query.lower() for k in keyword.split()):
+                    try:
+                        df_output = logic_fn(filtered_df)
+                        st.markdown(f"**Answer for: {keyword.title()}**")
+                        st.dataframe(df_output)
+                        st.download_button("📥 Download Table as CSV", df_output.to_csv(index=False), file_name=filename)
+                        st.session_state.qa_history.append((query, df_output.to_markdown(index=False)))
+                        response_shown = True
+                    except: pass
 
-            st.session_state.qa_history.append((query, answer))
+            if not response_shown:
+                df_str = filtered_df.fillna(0).to_string(index=False)
+                user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.1
+                )
+                answer = response.choices[0].message.content
+                st.markdown(answer)
+
+                if "|" in answer:
+                    import io
+                    try:
+                        df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
+                        if len(df_temp.columns) >= 2:
+                            fig2, ax2 = plt.subplots()
+                            df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
+                            ax2.set_title("Chart Based on Answer")
+                            st.pyplot(fig2)
+                            st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+                    except: pass
+
+                st.session_state.qa_history.append((query, answer))
     except Exception as e:
         st.error(f"Error: {str(e)}")
 
