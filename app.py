@@ -1,154 +1,131 @@
 import streamlit as st
 import pandas as pd
+import openai
 import matplotlib.pyplot as plt
-from openai import OpenAI
-from io import StringIO
-import re
-from dateutil import parser
-
-@st.cache_data
-def load_data():
-    csv_data = open("cleaned_store_data_embedded.csv", "r").read()
-    return pd.read_csv(StringIO(csv_data))
-
-df_raw = load_data()
-
-# Fix Month formatting like '24-Apr' → 'Apr 24'
-df_raw['Month'] = pd.to_datetime(df_raw['Month'], dayfirst=False, errors='coerce')
-df_raw['Month'] = df_raw['Month'].dt.strftime('%b %y')
-df_raw = df_raw[df_raw['Month'].notna()]
-df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]
-
-try:
-    df = df_raw.pivot_table(index=['Month', 'Store'], columns='Metric', values='Amount').reset_index()
-except Exception as e:
-    st.error("Data pivoting failed. Please check if the raw CSV is clean.")
-    st.stop()
-
-def force_match_months(text, month_list):
-    text = text.lower().replace(" ", "")
-    for m in month_list:
-        if m.lower().replace(" ", "") in text:
-            return m
-        try:
-            parsed = parser.parse(text, fuzzy=True)
-            parsed_fmt = parsed.strftime('%b %y')
-            if parsed_fmt in month_list:
-                return parsed_fmt
-        except:
-            continue
-    return None
-
-api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
-client = OpenAI(api_key=api_key)
+import io
 
 st.set_page_config(layout="wide")
-st.markdown("""
-    <style>
-    textarea, .stTextInput input {font-size: 18px;}
-    .stDownloadButton button {margin-top: 10px;}
-    .stDataFrame, .dataframe {margin-bottom: 1rem;}
-    </style>
-    """, unsafe_allow_html=True)
 
-query = st.text_input("", placeholder="Ask a store performance question...", label_visibility="collapsed")
+# --- Load Data ---
+@st.cache_data
+def load_data():
+    return pd.read_csv("cleaned_store_data_final.csv")
+
+df = load_data()
+
+# --- Sidebar ---
+st.sidebar.title("🧠 QSR CEO Q&A Bot")
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 if "qa_history" not in st.session_state:
     st.session_state.qa_history = []
 
-if query:
-    try:
-        months = df['Month'].dropna().unique().tolist()
-        stores = df['Store'].dropna().unique().tolist()
+# --- Title ---
+st.markdown("<h2 style='text-align:center;'>QSR CEO Intelligence Bot</h2>", unsafe_allow_html=True)
 
-        def normalize(text):
-            return re.sub(r"[^a-z0-9]", "", text.lower())
+# --- User Question ---
+user_question = st.text_input("Ask any store-level performance question:", placeholder="E.g. Which store had highest revenue in May 2025?")
 
-        parsed_month = force_match_months(query, months)
-        query_months = [parsed_month] if parsed_month else []
-        query_norm = normalize(query)
-        query_stores = [s for s in stores if normalize(s) in query_norm]
+# --- GPT Logic Bank ---
+logic_blocks = []
 
-        filtered_df = df.copy()
-        if query_months:
-            filtered_df = filtered_df[filtered_df['Month'].isin(query_months)]
-        if query_stores:
-            filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
+all_metrics = [c for c in df.columns if c not in ["Month", "Store"]]
 
-        if not query_months and not query_stores:
-            st.info("No specific month or store found in your question. Showing GPT-generated answer on all data.")
-            filtered_df = filtered_df.head(200)
+for metric in all_metrics:
+    metric_safe = metric.replace(" ", "_").lower()
+    logic_blocks.extend([
+        (f"highest {metric.lower()}",
+         lambda df, m=metric: df[df[m] == df[m].max()][["Month", "Store", m]],
+         f"highest_{metric_safe}.csv"),
 
-        if filtered_df.empty:
-            st.warning("No data found matching the filters in your question. Please check store/month spelling.")
-        else:
-            response_shown = False
+        (f"lowest {metric.lower()}",
+         lambda df, m=metric: df[df[m] == df[m].min()][["Month", "Store", m]],
+         f"lowest_{metric_safe}.csv"),
 
-            logic_blocks = [
-                ("highest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].max()][['Month', 'Store', 'Gross Sales']], "top_store_sales.csv"),
-                ("lowest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].min()][['Month', 'Store', 'Gross Sales']], "lowest_store_sales.csv"),
-                ("sort by gross sales", lambda df: df.sort_values(by='Gross Sales', ascending=False)[['Month', 'Store', 'Gross Sales']], "sorted_gross_sales.csv"),
-                ("highest revenue store across all months", lambda df: pd.DataFrame({"Store": [df.groupby('Store')['Net Sales'].sum().idxmax()], "Total Net Sales": [df.groupby('Store')['Net Sales'].sum().max()]}), "highest_total_revenue.csv"),
-                ("highest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.max()")[["Month", "Store", "EBITDA"]], "top_ebitda.csv"),
-                ("lowest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.min()")[["Month", "Store", "EBITDA"]], "lowest_ebitda.csv"),
-                ("highest margin", lambda df: df.assign(**{"Margin %": 100 * df['Gross margin'] / df['Net Sales']}).query("`Margin %` == `Margin %`.max()")[["Month", "Store", "Margin %"]], "top_margin.csv"),
-                ("lowest margin", lambda df: df.assign(**{"Margin %": 100 * df['Gross margin'] / df['Net Sales']}).query("`Margin %` == `Margin %`.min()")[["Month", "Store", "Margin %"]], "lowest_margin.csv"),
-                ("rent trend", lambda df: df.groupby("Month")["Rent"].sum().reset_index(), "monthly_rent_trend.csv"),
-                ("cost breakdown", lambda df: df[["Store", "COGS (food +packaging)", "store Labor Cost", "Utility Cost", "Marketing & advertisement", "Other opex expenses"]].groupby("Store").sum().reset_index(), "cost_breakdown.csv"),
-                ("ebitda trend", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).groupby("Month")["EBITDA"].sum().reset_index(), "ebitda_trend.csv"),
-                ("gross sales trend", lambda df: df.groupby("Month")["Gross Sales"].sum().reset_index(), "gross_sales_trend.csv"),
-                ("anomaly", lambda df: df[df['Gross Sales'] > df['Gross Sales'].mean() + 2 * df['Gross Sales'].std()][["Month", "Store", "Gross Sales"]], "anomalies.csv"),
-                ("highest labor cost", lambda df: df[df['store Labor Cost'] == df['store Labor Cost'].max()][['Month', 'Store', 'store Labor Cost']], "top_labor_cost.csv"),
-                ("lowest labor cost", lambda df: df[df['store Labor Cost'] == df['store Labor Cost'].min()][['Month', 'Store', 'store Labor Cost']], "lowest_labor_cost.csv"),
-                ("top utilities", lambda df: df[df['Utility Cost'] == df['Utility Cost'].max()][['Month', 'Store', 'Utility Cost']], "top_utility_cost.csv")
-            ]
+        (f"top stores by {metric.lower()}",
+         lambda df, m=metric: df.sort_values(by=m, ascending=False)[["Month", "Store", m]].head(10),
+         f"top_stores_{metric_safe}.csv"),
 
-            for keyword, logic_fn, filename in logic_blocks:
-                if not response_shown and all(k in query.lower() for k in keyword.split()):
-                    try:
-                        df_output = logic_fn(filtered_df)
-                        if df_output.empty and len(filtered_df) == 1:
-                            df_output = filtered_df
-                        st.markdown(f"### 🔍 {keyword.title()} Result")
-                        st.dataframe(df_output, use_container_width=True)
-                        st.download_button("📅 Download as CSV", df_output.to_csv(index=False), file_name=filename)
-                        st.session_state.qa_history.append((query, df_output.to_markdown(index=False)))
-                        response_shown = True
-                    except Exception as e:
-                        st.warning(f"Logic failed: {e}")
+        (f"{metric.lower()} as % of sales",
+         lambda df, m=metric: df.assign(**{f"{metric} %": 100 * df[m] / df['Net Sales']}).sort_values(by=f"{metric} %", ascending=False)[["Month", "Store", f"{metric} %"]],
+         f"percent_sales_{metric_safe}.csv"),
 
-            if not response_shown:
-                df_str = filtered_df.fillna(0).to_string(index=False)
-                user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+        (f"MoM change in {metric.lower()}",
+         lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change().rename("MoM Change").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
+         f"mom_change_{metric_safe}.csv"),
 
-                response = client.chat.completions.create(
+        (f"YoY growth in {metric.lower()}",
+         lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change(periods=12).rename("YoY Growth").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
+         f"yoy_growth_{metric_safe}.csv"),
+
+        (f"anomaly in {metric.lower()}",
+         lambda df, m=metric: df[(df[m] - df[m].mean()).abs() > 3 * df[m].std()][["Month", "Store", m]],
+         f"anomaly_{metric_safe}.csv"),
+
+        (f"gross margin % for {metric.lower()}",
+         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[["Month", "Store", "Gross_Margin_Pct"]],
+         f"gross_margin_pct.csv"),
+
+        (f"store profitability ranking by {metric.lower()}",
+         lambda df: df.groupby('Store')['Net Sales'].sum().sort_values(ascending=False).reset_index().rename(columns={'Net Sales': 'Total Revenue'}),
+         f"profit_ranking_{metric_safe}.csv")
+    ])
+
+# --- Bot Logic ---
+if user_question:
+    user_input = user_question.lower()
+    answer = None
+    matched_logic = None
+
+    for phrase, logic_func, fname in logic_blocks:
+        if phrase in user_input:
+            try:
+                answer_df = logic_func(df)
+                answer = f"Answer for: **{phrase}**"
+                matched_logic = (answer_df, fname)
+                break
+            except Exception as e:
+                answer = f"⚠️ Logic failed: {str(e)}"
+                break
+
+    if matched_logic:
+        df_temp, fname = matched_logic
+        st.write(answer)
+        st.dataframe(df_temp)
+
+        # Optional Chart
+        if df_temp.shape[1] == 3:
+            fig, ax = plt.subplots()
+            df_temp.plot(x="Store", y=df_temp.columns[-1], kind="bar", ax=ax)
+            st.pyplot(fig)
+
+        # Download
+        csv_bytes = df_temp.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download CSV", data=csv_bytes, file_name=fname, mime="text/csv")
+
+    else:
+        # Fallback to GPT
+        with st.spinner("Thinking..."):
+            try:
+                messages = [
+                    {"role": "system", "content": "You are a helpful business analyst."},
+                    {"role": "user", "content": f"DataFrame:\n{df.head(100).to_csv(index=False)}\n\nQuestion: {user_question}"}
+                ]
+                completion = openai.ChatCompletion.create(
                     model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. Keep the markdown tight, crisp and visual if useful."},
-                        {"role": "user", "content": user_message}
-                    ],
-                    temperature=0.1
+                    messages=messages,
+                    temperature=0.2
                 )
-                answer = response.choices[0].message.content
-                st.markdown(answer)
+                response = completion.choices[0].message.content.strip()
+                st.markdown(response)
+            except Exception as e:
+                st.error(f"GPT failed: {e}")
 
-                if "|" in answer:
-                    import io
-                    try:
-                        df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
-                        if len(df_temp.columns) >= 2:
-                            fig2, ax2 = plt.subplots()
-                            df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
-                            ax2.set_title("Visual Summary")
-                            st.pyplot(fig2)
-                            st.download_button("📅 Download Answer CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
-                    except: pass
+    st.session_state.qa_history.append((user_question, answer))
 
-                st.session_state.qa_history.append((query, answer))
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
+# --- Sidebar History ---
+if st.session_state.qa_history:
+    st.sidebar.markdown("### 🕓 Q&A History")
+    for q, a in reversed(st.session_state.qa_history[-10:]):
+        st.sidebar.markdown(f"**Q:** {q}  \n**A:** {a or 'No answer'}")
 
-with st.sidebar:
-    st.markdown("### 🔁 Past Questions")
-    for q, a in st.session_state.qa_history[-10:]:
-        st.markdown(f"**Q:** {q}\n\n*A:* {a}")
