@@ -28,6 +28,7 @@ if df.empty:
     st.stop()
 
 month_list = df['Month'].dropna().unique().tolist()
+store_list = df['Store'].dropna().unique().tolist()
 
 def extract_standard_month(text, month_list):
     text = text.lower().replace("'", "").replace(",", "").replace("-", " ").replace("/", " ").replace(".", " ")
@@ -40,6 +41,12 @@ def extract_standard_month(text, month_list):
                 return normalized
         except:
             continue
+    return None
+
+def extract_store(text):
+    for store in store_list:
+        if store.lower() in text.lower():
+            return store
     return None
 
 logic_blocks = []
@@ -94,11 +101,11 @@ for metric in all_metrics:
          f"anomaly_{metric_safe}.csv"),
 
         (f"EBITDA for {metric.lower()}",
-         lambda df: df.assign(EBITDA=df['Net Sales'] - df[['COGS (food +packaging)', 'Aggregator commission', 'Marketing & advertisement', 'store Labor Cost', 'Utility Cost', 'Other opex expenses']].sum(axis=1))[["Month", "Store", "EBITDA"]],
+         lambda df: df.assign(EBITDA=df['Net Sales'] - df[['COGS (food +packaging)', 'Aggregator commission', 'Marketing & advertisement', 'store Labor Cost', 'Utility Cost', 'Other opex expenses']].sum(axis=1))[['Month', 'Store', 'EBITDA']],
          f"ebitda.csv"),
 
         (f"gross margin % for {metric.lower()}",
-         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[["Month", "Store", "Gross_Margin_Pct"]],
+         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[['Month', 'Store', 'Gross_Margin_Pct']],
          f"gross_margin_pct.csv"),
 
         (f"store profitability ranking by {metric.lower()}",
@@ -110,13 +117,20 @@ query = st.text_input("Ask a question about store performance:")
 
 if query:
     found = False
-    for pattern, logic_fn, filename in logic_blocks:
-        if pattern in query.lower():
-            df_temp = logic_fn(df)
-            st.dataframe(df_temp)
-            st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=filename)
-            found = True
-            break
+    store_match = extract_store(query)
+    if store_match and "sales" in query.lower():
+        df_temp = df[df['Store'] == store_match][['Month', 'Store', 'Net Sales']].sort_values(by='Month')
+        st.dataframe(df_temp)
+        st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=f"{store_match}_sales.csv")
+        found = True
+    else:
+        for pattern, logic_fn, filename in logic_blocks:
+            if pattern in query.lower():
+                df_temp = logic_fn(df)
+                st.dataframe(df_temp)
+                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=filename)
+                found = True
+                break
 
     if not found:
         st.warning(fallback_message)
