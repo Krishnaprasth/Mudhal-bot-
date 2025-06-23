@@ -39,8 +39,9 @@ if query:
         if query_stores:
             filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
 
-        # Limit to 200 rows to keep token usage low
-        filtered_df = filtered_df.head(200)
+        # Only apply row limit if no filtering is applied
+        if not query_months and not query_stores:
+            filtered_df = filtered_df.head(200)
 
         df_str = filtered_df.to_string(index=False)
         user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
