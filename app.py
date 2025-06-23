@@ -11,7 +11,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ✅ Use OpenAI API key securely from Streamlit secrets
 client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data
@@ -34,29 +33,57 @@ except Exception as e:
     st.error(f"❌ Pivoting failed: {e}")
     st.stop()
 
-# Extract unique months and stores for prompt grounding
 months_text = ", ".join(sorted(df_raw["Month"].dropna().unique()))
 stores_text = ", ".join(sorted(df_raw["Store"].dropna().unique()))
 preview_table = tabulate(df_pivot.head(), headers="keys", tablefmt="github", showindex=False)
 
-# Initialize Q&A memory
 if "qa_history" not in st.session_state:
     st.session_state.qa_history = []
 
-# Show sidebar history
 with st.sidebar:
     st.markdown("### 🕑 History")
     for i, (q, a) in enumerate(reversed(st.session_state.qa_history[-10:]), 1):
         st.markdown(f"**{i}. {q}**")
         st.markdown(f"➤ {a[:500]}" if isinstance(a, str) else "➤ [table response]")
 
-# User query input
+# -------------- Logic Engine 100 blocks ----------------
+def logic_gm_percent_top_month():
+    df_gm = df_raw.pivot_table(index="Month", columns="Metric", values="Amount", aggfunc="sum").reset_index()
+    df_gm = df_gm.dropna(subset=["Net Sales", "Gross margin"])
+    df_gm["Gross Margin %"] = df_gm["Gross margin"] / df_gm["Net Sales"] * 100
+    best_month = df_gm.loc[df_gm["Gross Margin %"].idxmax()]
+    return f"📈 Highest Gross Margin % Month: **{best_month['Month']}** — **{best_month['Gross Margin %']:.2f}%**", df_gm.set_index("Month")["Gross Margin %"]
+
+def logic_top_ebitda_stores(month="May 24", top_n=5):
+    df_month = df_pivot[df_pivot["Month"] == month].copy()
+    df_month["EBITDA %"] = df_month["Outlet EBITDA"] / df_month["Net Sales"] * 100
+    df_month = df_month.sort_values("EBITDA %", ascending=False).head(top_n)
+    return f"🏆 Top {top_n} stores by EBITDA % in {month}", df_month[["Store", "EBITDA %"]].set_index("Store")
+
+logic_map = {
+    "highest gross margin": logic_gm_percent_top_month,
+    "top 5 stores by ebitda": lambda: logic_top_ebitda_stores("May 24"),
+    "top stores by ebitda": lambda: logic_top_ebitda_stores("May 24"),
+    # Extend this map to 100 entries later
+}
+
 user_query = st.chat_input("Ask your store performance question")
 
 if user_query:
     with st.spinner("Analyzing..."):
         try:
-            prompt = f"""
+            matched = False
+            for key in logic_map:
+                if key in user_query.lower():
+                    result_text, result_data = logic_map[key]()
+                    st.success(result_text)
+                    st.dataframe(result_data)
+                    st.session_state.qa_history.append((user_query, result_text))
+                    matched = True
+                    break
+
+            if not matched:
+                prompt = f"""
 You are a data analyst for a QSR chain. The dataset contains store-level monthly financial performance metrics.
 
 Available months: {months_text}
@@ -71,18 +98,18 @@ Use only available data. If a month or store isn't in the dataset, mention that 
 Prefer concise summaries, tables, or code suggestions. Do not assume missing values are zero.
 """
 
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-            )
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful data analyst."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,
+                )
 
-            answer = response.choices[0].message.content
-            st.markdown(answer)
-            st.session_state.qa_history.append((user_query, answer))
+                answer = response.choices[0].message.content
+                st.markdown(answer)
+                st.session_state.qa_history.append((user_query, answer))
 
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
