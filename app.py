@@ -22,9 +22,15 @@ except Exception as e:
 api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
 client = OpenAI(api_key=api_key)
 
-st.set_page_config(layout="centered")
-st.markdown("""<style>textarea, .stTextInput input {font-size: 18px;} .stDownloadButton button {margin-top: 10px;}</style>""", unsafe_allow_html=True)
-st.title(":burrito: QSR CEO Bot")
+st.set_page_config(layout="wide")
+st.markdown("""
+    <style>
+    textarea, .stTextInput input {font-size: 18px;}
+    .stDownloadButton button {margin-top: 10px;}
+    .stDataFrame, .dataframe {margin-bottom: 1rem;}
+    </style>
+    """, unsafe_allow_html=True)
+
 query = st.text_input("", placeholder="Ask a store performance question...", label_visibility="collapsed")
 
 if "qa_history" not in st.session_state:
@@ -66,19 +72,26 @@ if query:
                 ("rent trend", lambda df: df.groupby("Month")["Rent"].sum().reset_index(), "monthly_rent_trend.csv"),
                 ("cost breakdown", lambda df: df[["Store", "COGS (food +packaging)", "store Labor Cost", "Utility Cost", "Marketing & advertisement", "Other opex expenses"]].groupby("Store").sum().reset_index(), "cost_breakdown.csv"),
                 ("ebitda trend", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).groupby("Month")["EBITDA"].sum().reset_index(), "ebitda_trend.csv"),
-                ("gross sales trend", lambda df: df.groupby("Month")["Gross Sales"].sum().reset_index(), "gross_sales_trend.csv")
+                ("gross sales trend", lambda df: df.groupby("Month")["Gross Sales"].sum().reset_index(), "gross_sales_trend.csv"),
+                ("anomaly", lambda df: df[df['Gross Sales'] > df['Gross Sales'].mean() + 2 * df['Gross Sales'].std()][["Month", "Store", "Gross Sales"]], "anomalies.csv"),
+                ("highest labor cost", lambda df: df[df['store Labor Cost'] == df['store Labor Cost'].max()][['Month', 'Store', 'store Labor Cost']], "top_labor_cost.csv"),
+                ("lowest labor cost", lambda df: df[df['store Labor Cost'] == df['store Labor Cost'].min()][['Month', 'Store', 'store Labor Cost']], "lowest_labor_cost.csv"),
+                ("top utilities", lambda df: df[df['Utility Cost'] == df['Utility Cost'].max()][['Month', 'Store', 'Utility Cost']], "top_utility_cost.csv")
             ]
 
             for keyword, logic_fn, filename in logic_blocks:
                 if not response_shown and all(k in query.lower() for k in keyword.split()):
                     try:
                         df_output = logic_fn(filtered_df)
-                        st.markdown(f"**Answer for: {keyword.title()}**")
-                        st.dataframe(df_output)
-                        st.download_button("📥 Download Table as CSV", df_output.to_csv(index=False), file_name=filename)
+                        if df_output.empty and len(filtered_df) == 1:
+                            df_output = filtered_df
+                        st.markdown(f"### 🔍 {keyword.title()} Result")
+                        st.dataframe(df_output, use_container_width=True)
+                        st.download_button("📥 Download as CSV", df_output.to_csv(index=False), file_name=filename)
                         st.session_state.qa_history.append((query, df_output.to_markdown(index=False)))
                         response_shown = True
-                    except: pass
+                    except Exception as e:
+                        st.warning(f"Logic failed: {e}")
 
             if not response_shown:
                 df_str = filtered_df.fillna(0).to_string(index=False)
@@ -87,7 +100,7 @@ if query:
                 response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[
-                        {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
+                        {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. Keep the markdown tight, crisp and visual if useful."},
                         {"role": "user", "content": user_message}
                     ],
                     temperature=0.1
@@ -102,9 +115,9 @@ if query:
                         if len(df_temp.columns) >= 2:
                             fig2, ax2 = plt.subplots()
                             df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
-                            ax2.set_title("Chart Based on Answer")
+                            ax2.set_title("Visual Summary")
                             st.pyplot(fig2)
-                            st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+                            st.download_button("📥 Download Answer CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
                     except: pass
 
                 st.session_state.qa_history.append((query, answer))
@@ -112,6 +125,6 @@ if query:
         st.error(f"Error: {str(e)}")
 
 with st.sidebar:
-    st.markdown("### 🔁 Q&A History")
+    st.markdown("### 🔁 Past Questions")
     for q, a in st.session_state.qa_history[-10:]:
         st.markdown(f"**Q:** {q}\n\n*A:* {a}")
