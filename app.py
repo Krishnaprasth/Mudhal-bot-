@@ -25,17 +25,18 @@ except Exception as e:
     st.error("Data pivoting failed. Please check if the raw CSV is clean.")
     st.stop()
 
-def robust_month_match(query, valid_months):
-    for m in valid_months:
-        if m.lower().replace(" ", "") in query.lower().replace(" ", ""):
+def force_match_months(text, month_list):
+    text = text.lower().replace(" ", "")
+    for m in month_list:
+        if m.lower().replace(" ", "") in text:
             return m
-    try:
-        parsed = parser.parse(query, fuzzy=True)
-        fallback = parsed.strftime("%b %y")
-        if fallback in valid_months:
-            return fallback
-    except:
-        return None
+        try:
+            parsed = parser.parse(text, fuzzy=True)
+            parsed_fmt = parsed.strftime('%b %y')
+            if parsed_fmt in month_list:
+                return parsed_fmt
+        except:
+            continue
     return None
 
 api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
@@ -63,7 +64,7 @@ if query:
         def normalize(text):
             return re.sub(r"[^a-z0-9]", "", text.lower())
 
-        parsed_month = robust_month_match(query, months)
+        parsed_month = force_match_months(query, months)
         query_months = [parsed_month] if parsed_month else []
         query_norm = normalize(query)
         query_stores = [s for s in stores if normalize(s) in query_norm]
@@ -75,6 +76,7 @@ if query:
             filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
 
         if not query_months and not query_stores:
+            st.info("No specific month or store found in your question. Showing GPT-generated answer on all data.")
             filtered_df = filtered_df.head(200)
 
         if filtered_df.empty:
