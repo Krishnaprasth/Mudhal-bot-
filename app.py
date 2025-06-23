@@ -1,8 +1,8 @@
-# app.py — Unified natural language bot without logic blocks
+# app.py — Unified natural language bot with OpenAI v1+ compatibility
 
 import streamlit as st
 import pandas as pd
-import openai
+from openai import OpenAI
 
 @st.cache_data
 def load_data():
@@ -18,7 +18,8 @@ AUR,Apr 24,,,,,,,,,,,,
 
 df = load_data()
 
-openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
+api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
+client = OpenAI(api_key=api_key)
 
 st.set_page_config(layout="centered")
 st.markdown("""<style>textarea, .stTextInput input {font-size: 18px;}</style>""", unsafe_allow_html=True)
@@ -30,7 +31,7 @@ if query:
         df_head_str = df.head(10).to_string(index=False)
         user_message = f"DataFrame Preview:\n{df_head_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant."},
