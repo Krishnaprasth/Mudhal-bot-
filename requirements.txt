@@ -1,9 +1,5 @@
 streamlit
 pandas
-matplotlib
-seaborn
-fpdf
 openai
-Pillow
+pandasai
 xlsxwriter
-openpyxl
