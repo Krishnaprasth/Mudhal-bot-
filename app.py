@@ -64,3 +64,14 @@ Do not assume facts not in the table. Prefer short tabular answers when applicab
                     model="gpt-4",
                     messages=[
                         {"role": "system", "content": "You are a helpful data analyst."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,
+                )
+
+                answer = response.choices[0].message['content']
+                st.markdown(answer)
+                st.session_state.qa_history.append((user_query, answer))
+
+            except Exception as e:
+                st.error(f"⚠️ Error: {e}")
