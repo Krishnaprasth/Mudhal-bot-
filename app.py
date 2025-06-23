@@ -11,7 +11,14 @@ def load_data():
     return pd.read_csv(StringIO(csv_data))
 
 df_raw = load_data()
-df = df_raw.pivot_table(index=['Month', 'Store'], columns='Metric', values='Amount').reset_index()
+df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]  # Ensure no missing metrics or values
+
+# Pivot to structured DataFrame
+try:
+    df = df_raw.pivot_table(index=['Month', 'Store'], columns='Metric', values='Amount').reset_index()
+except Exception as e:
+    st.error("Data pivoting failed. Please check if the raw CSV is clean.")
+    st.stop()
 
 api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-your-key"
 client = OpenAI(api_key=api_key)
@@ -33,7 +40,6 @@ if query:
             return re.sub(r"[^a-z0-9]", "", text.lower())
 
         query_norm = normalize(query)
-
         query_months = [m for m in months if normalize(m) in query_norm]
         query_stores = [s for s in stores if normalize(s) in query_norm]
 
@@ -43,34 +49,41 @@ if query:
         if query_stores:
             filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
 
+        # Avoid data overload if no filtering
         if not query_months and not query_stores:
             filtered_df = filtered_df.head(200)
 
-        df_str = filtered_df.to_string(index=False)
-        user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+        if filtered_df.empty:
+            st.warning("No data found matching the filters in your question. Please check store/month spelling.")
+        else:
+            df_str = filtered_df.fillna(0).to_string(index=False)
+            user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
 
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1
-        )
-        answer = response.choices[0].message.content
-        st.markdown(answer)
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant. If the question refers to trends or comparisons, provide a matplotlib chart. Keep the markdown tight and clean."},
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=0.1
+            )
+            answer = response.choices[0].message.content
+            st.markdown(answer)
 
-        if "|" in answer:
-            import io
-            df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
-            if len(df_temp.columns) >= 2:
-                fig2, ax2 = plt.subplots()
-                df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
-                ax2.set_title("Chart Based on Answer")
-                st.pyplot(fig2)
-                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+            if "|" in answer:
+                import io
+                try:
+                    df_temp = pd.read_csv(io.StringIO(answer.split("\n\n")[-1]), sep="|").dropna(axis=1, how="all")
+                    if len(df_temp.columns) >= 2:
+                        fig2, ax2 = plt.subplots()
+                        df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
+                        ax2.set_title("Chart Based on Answer")
+                        st.pyplot(fig2)
+                        st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+                except:
+                    pass
 
-        st.session_state.qa_history.append((query, answer))
+            st.session_state.qa_history.append((query, answer))
     except Exception as e:
         st.error(f"Error: {str(e)}")
 
