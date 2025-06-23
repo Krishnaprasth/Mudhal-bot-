@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from openai import OpenAI
 from io import StringIO
+import re
 
 @st.cache_data
 def load_data():
@@ -25,7 +26,23 @@ if "qa_history" not in st.session_state:
 
 if query:
     try:
-        df_str = df.to_string(index=False)
+        # Try to extract months and store names from query
+        months = df['Month'].dropna().unique().tolist()
+        stores = df['Store'].dropna().unique().tolist()
+
+        query_months = [m for m in months if m.lower() in query.lower()]
+        query_stores = [s for s in stores if s.lower() in query.lower()]
+
+        filtered_df = df.copy()
+        if query_months:
+            filtered_df = filtered_df[filtered_df['Month'].isin(query_months)]
+        if query_stores:
+            filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
+
+        # Limit to 200 rows to keep token usage low
+        filtered_df = filtered_df.head(200)
+
+        df_str = filtered_df.to_string(index=False)
         user_message = f"DataFrame:\n{df_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
 
         response = client.chat.completions.create(
