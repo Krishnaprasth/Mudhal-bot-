@@ -27,12 +27,14 @@ query = st.text_input("", placeholder="Ask a store performance question...", lab
 
 if query:
     try:
+        df_head_str = df.head(10).to_string(index=False)
+        user_message = f"DataFrame Preview:\n{df_head_str}\n\nNow answer this question using pandas dataframe logic only:\n{query}"
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful data analyst for a QSR company. You analyze the provided pandas dataframe and return structured answers, especially tables if relevant."},
-                {"role": "user", "content": f"DataFrame:
-{df.head(10).to_string(index=False)}\n\nNow answer: {query}"}
+                {"role": "user", "content": user_message}
             ],
             temperature=0.1
         )
