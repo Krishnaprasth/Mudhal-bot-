@@ -65,6 +65,7 @@ if query:
             logic_blocks = [
                 ("highest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].max()][['Month', 'Store', 'Gross Sales']], "top_store_sales.csv"),
                 ("lowest sales", lambda df: df[df['Gross Sales'] == df['Gross Sales'].min()][['Month', 'Store', 'Gross Sales']], "lowest_store_sales.csv"),
+                ("sort by gross sales", lambda df: df.sort_values(by='Gross Sales', ascending=False)[['Month', 'Store', 'Gross Sales']], "sorted_gross_sales.csv"),
                 ("highest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.max()")[["Month", "Store", "EBITDA"]], "top_ebitda.csv"),
                 ("lowest ebitda", lambda df: df.assign(EBITDA=df['Net Sales'] - (df['COGS (food +packaging)'] + df['Marketing & advertisement'] + df['Other opex expenses'] + df['Utility Cost'] + df['store Labor Cost'] + df['Aggregator commission'] + df['Rent'] + df['CAM'])).query("EBITDA == EBITDA.min()")[["Month", "Store", "EBITDA"]], "lowest_ebitda.csv"),
                 ("highest margin", lambda df: df.assign(**{"Margin %": 100 * df['Gross margin'] / df['Net Sales']}).query("`Margin %` == `Margin %`.max()")[["Month", "Store", "Margin %"]], "top_margin.csv"),
