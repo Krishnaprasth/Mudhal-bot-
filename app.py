@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import openai
 from tabulate import tabulate
-from io import BytesIO
 
 st.set_page_config(layout="centered")
 st.markdown("""
@@ -12,7 +11,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ✅ Use OpenAI API Key from Streamlit secrets
+# ✅ Use OpenAI API key securely from Streamlit secrets
 client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data
@@ -35,43 +34,9 @@ except Exception as e:
     st.error(f"❌ Pivoting failed: {e}")
     st.stop()
 
-if "qa_history" not in st.session_state:
-    st.session_state.qa_history = []
+# Extract unique month/store values for prompt grounding
+months_text = ", ".join(sorted(df_raw["Month"].dropna().unique()))
+stores_text = ", ".join(sorted(df_raw["Store"].dropna().unique()))
+preview_table = tabulate(df_pivot.head(), headers="keys", tablefmt="github", showindex=False)
 
-with st.sidebar:
-    st.markdown("### 🕑 History")
-    for i, (q, a) in enumerate(reversed(st.session_state.qa_history[-10:]), 1):
-        st.markdown(f"**{i}. {q}**")
-        st.markdown(f"➤ {a[:500]}" if isinstance(a, str) else "➤ [table response]")
-
-user_query = st.chat_input("Ask your store performance question")
-
-if user_query:
-    with st.spinner("Analyzing..."):
-        try:
-            prompt = f"""
-You are a data analyst for a QSR chain. Given this DataFrame schema:
-
-{tabulate(df_pivot.head(), headers='keys', tablefmt='github', showindex=False)}
-
-User asked: "{user_query}"
-
-Write a concise, relevant summary using data logic or suggest a pandas filter to answer this.
-Do not assume facts not in the table. Prefer short tabular answers when applicable.
-"""
-
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-            )
-
-            answer = response.choices[0].message.content
-            st.markdown(answer)
-            st.session_state.qa_history.append((user_query, answer))
-
-        except Exception as e:
-            st.error(f"⚠️ Error: {e}")
+if "qa_histo_
