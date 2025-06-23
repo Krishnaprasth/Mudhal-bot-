@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-from pandasai import SmartDataframe
-from pandasai.llm.openai import OpenAI
+import openai
 from io import BytesIO
 
 st.set_page_config(layout="centered")
@@ -39,40 +38,29 @@ with st.sidebar:
     st.markdown("### 🕑 History")
     for i, (q, a) in enumerate(reversed(st.session_state.qa_history[-10:]), 1):
         st.markdown(f"**{i}. {q}**")
-        if isinstance(a, pd.DataFrame):
-            st.markdown(a.to_markdown(index=False), unsafe_allow_html=True)
-        else:
-            st.markdown(f"➤ {a}")
+        st.markdown(f"➤ {a[:500]}" if isinstance(a, str) else "➤ [table response]")
 
 openai_api_key = st.text_input("", placeholder="Enter your OpenAI API Key", type="password")
 
 if openai_api_key:
-    llm = OpenAI(api_token=openai_api_key)
-    smart_df = SmartDataframe(df_pivot, config={"llm": llm})
-
+    openai.api_key = openai_api_key
     user_query = st.chat_input("Ask your store performance question")
 
     if user_query:
         with st.spinner("Analyzing..."):
             try:
-                response = smart_df.chat(user_query)
+                prompt = f"""
+You are a data analyst for a QSR chain. Given this DataFrame schema:
 
-                if isinstance(response, pd.DataFrame):
-                    st.dataframe(response)
+{df_pivot.head().to_markdown(index=False)}
 
-                    buffer = BytesIO()
-                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                        response.to_excel(writer, index=False)
-                    st.download_button(
-                        label="Download as Excel",
-                        data=buffer.getvalue(),
-                        file_name="response.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.write(response)
+User asked: "{user_query}"
 
-                st.session_state.qa_history.append((user_query, response))
+Write a concise, relevant summary using data logic or suggest a pandas filter to answer this.
+Do not assume facts not in the table. Prefer short tabular answers when applicable.
+"""
 
-            except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+                response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful data analyst."},
