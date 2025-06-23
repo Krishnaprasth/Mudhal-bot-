@@ -1,5 +1,0 @@
-streamlit
-pandas
-openai
-pandasai
-xlsxwriter
