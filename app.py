@@ -26,12 +26,16 @@ if "qa_history" not in st.session_state:
 
 if query:
     try:
-        # Try to extract months and store names from query
         months = df['Month'].dropna().unique().tolist()
         stores = df['Store'].dropna().unique().tolist()
 
-        query_months = [m for m in months if m.lower() in query.lower()]
-        query_stores = [s for s in stores if s.lower() in query.lower()]
+        def normalize(text):
+            return re.sub(r"[^a-z0-9]", "", text.lower())
+
+        query_norm = normalize(query)
+
+        query_months = [m for m in months if normalize(m) in query_norm]
+        query_stores = [s for s in stores if normalize(s) in query_norm]
 
         filtered_df = df.copy()
         if query_months:
@@ -39,7 +43,6 @@ if query:
         if query_stores:
             filtered_df = filtered_df[filtered_df['Store'].isin(query_stores)]
 
-        # Only apply row limit if no filtering is applied
         if not query_months and not query_stores:
             filtered_df = filtered_df.head(200)
 
@@ -65,13 +68,4 @@ if query:
                 df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
                 ax2.set_title("Chart Based on Answer")
                 st.pyplot(fig2)
-                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
-
-        st.session_state.qa_history.append((query, answer))
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-
-with st.sidebar:
-    st.markdown("### 🔁 Q&A History")
-    for q, a in st.session_state.qa_history[-10:]:
-        st.markdown(f"**Q:** {q}\n\n*A:* {a}")
+                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv"
