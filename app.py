@@ -6,15 +6,7 @@ from openai import OpenAI
 
 @st.cache_data
 def load_data():
-    csv_data = '''Store,Month,Net Sales,COGS (food +packaging),Gross margin,store Labor Cost,Utility Cost,Rent,CAM,Aggregator commission,Marketing & advertisement,Other opex expenses,Total outlet expenses,Outlet EBITDA
-ADM,Apr 24,1520149,542125,978024,220009,41067,85000,11656,84029,105799,60599,1040159,480990
-AKA,Apr 24,1312149,476250,835899,186823,33684,108000,11835,79250,57917,42950,1012459,299690
-ANN,Apr 24,2184577,742748,1441829,292971,50157,160000,21769,112798,123963,62557,1391215,793362
-ARK,Apr 24,1983214,763945,1219269,277578,51915,142000,17111,108902,127127,69985,1341618,641596
-AUR,Apr 24,,,,,,,,,,,,
-'''
-    from io import StringIO
-    return pd.read_csv(StringIO(csv_data))
+    return pd.read_csv("data/cleaned_store_data.csv")
 
 df = load_data()
 
