@@ -11,6 +11,9 @@ def load_data():
     return pd.read_csv(StringIO(csv_data))
 
 df_raw = load_data()
+
+# Fix Month formatting like '24-Apr' → 'Apr 24'
+df_raw['Month'] = pd.to_datetime(df_raw['Month'], errors='coerce').dt.strftime('%b %y')
 df_raw = df_raw[df_raw['Metric'].notna() & df_raw['Amount'].notna()]
 
 try:
