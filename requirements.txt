@@ -1,5 +1,6 @@
 streamlit
 pandas
 openai
-xlsxwriter
-tabulate
+matplotlib
+
+
