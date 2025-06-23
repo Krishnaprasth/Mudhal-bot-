@@ -1,6 +1,5 @@
-streamlit
-pandas
 openai
+pandas
 matplotlib
-
-
+streamlit
+python-dateutil
