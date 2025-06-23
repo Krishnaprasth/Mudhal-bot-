@@ -4,9 +4,13 @@ import matplotlib.pyplot as plt
 import re
 from dateutil import parser
 import os
+import openai
+import json
 
 st.set_page_config(layout="wide")
 st.title("📊 QSR CEO Assistant")
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @st.cache_data
 def load_data():
@@ -23,12 +27,12 @@ def load_data():
 
 # Load data
 df = load_data()
-
 if df.empty:
     st.stop()
 
 month_list = df['Month'].dropna().unique().tolist()
 store_list = df['Store'].dropna().unique().tolist()
+
 
 def extract_standard_month(text, month_list):
     text = text.lower().replace("'", "").replace(",", "").replace("-", " ").replace("/", " ").replace(".", " ")
@@ -49,8 +53,32 @@ def extract_store(text):
             return store
     return None
 
-logic_blocks = []
+def gpt_interpret_query(user_input):
+    prompt = f"""You are an analyst assistant. Given the user's question, extract and return what they are asking using structured language.
 
+    Question: \"{user_input}\"
+
+    Respond in JSON with fields: 
+    - metric (e.g. \"Net Sales\", \"Gross margin\", etc.),
+    - store (e.g. \"VEL\", if mentioned),
+    - month (e.g. \"June 24\", if mentioned),
+    - intent (e.g. \"top_store_by_metric\", \"store_trend\", \"compare_stores\", etc.)
+
+    Only respond with JSON."""
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        reply = response.choices[0].message.content.strip()
+        return json.loads(reply)
+    except Exception as e:
+        st.warning(f"GPT interpretation failed: {e}")
+        return None
+
+logic_blocks = []
 logic_blocks.append(
     ("which store did max revenue in",
      lambda df: df[df['Net Sales'] == df['Net Sales'].max()][['Month', 'Store', 'Net Sales']],
@@ -101,11 +129,11 @@ for metric in all_metrics:
          f"anomaly_{metric_safe}.csv"),
 
         (f"EBITDA for {metric.lower()}",
-         lambda df: df.assign(EBITDA=df['Net Sales'] - df[['COGS (food +packaging)', 'Aggregator commission', 'Marketing & advertisement', 'store Labor Cost', 'Utility Cost', 'Other opex expenses']].sum(axis=1))[['Month', 'Store', 'EBITDA']],
+         lambda df: df.assign(EBITDA=df['Net Sales'] - df[['COGS (food +packaging)', 'Aggregator commission', 'Marketing & advertisement', 'store Labor Cost', 'Utility Cost', 'Other opex expenses']].sum(axis=1))[["Month", "Store", "EBITDA"]],
          f"ebitda.csv"),
 
         (f"gross margin % for {metric.lower()}",
-         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[['Month', 'Store', 'Gross_Margin_Pct']],
+         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[["Month", "Store", "Gross_Margin_Pct"]],
          f"gross_margin_pct.csv"),
 
         (f"store profitability ranking by {metric.lower()}",
@@ -117,13 +145,27 @@ query = st.text_input("Ask a question about store performance:")
 
 if query:
     found = False
-    store_match = extract_store(query)
-    if store_match and "sales" in query.lower():
-        df_temp = df[df['Store'] == store_match][['Month', 'Store', 'Net Sales']].sort_values(by='Month')
-        st.dataframe(df_temp)
-        st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=f"{store_match}_sales.csv")
-        found = True
-    else:
+    interpretation = gpt_interpret_query(query)
+
+    if interpretation:
+        metric = interpretation.get("metric")
+        store = interpretation.get("store")
+        month = interpretation.get("month")
+        intent = interpretation.get("intent")
+
+        if intent == "top_store_by_metric" and metric and month:
+            df_temp = df[df['Month'] == month].sort_values(by=metric, ascending=False).head(1)
+            st.dataframe(df_temp)
+            st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=f"top_store_{metric}_{month}.csv")
+            found = True
+
+        elif intent == "store_trend" and metric and store:
+            df_temp = df[df['Store'] == store][['Month', 'Store', metric]].sort_values(by='Month')
+            st.dataframe(df_temp)
+            st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name=f"{store}_{metric}_trend.csv")
+            found = True
+
+    if not found:
         for pattern, logic_fn, filename in logic_blocks:
             if pattern in query.lower():
                 df_temp = logic_fn(df)
