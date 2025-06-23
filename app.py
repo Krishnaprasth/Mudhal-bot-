@@ -1,131 +1,107 @@
 import streamlit as st
 import pandas as pd
-import openai
 import matplotlib.pyplot as plt
-import io
+from io import StringIO
+import base64
 
 st.set_page_config(layout="wide")
 
-# --- Load Data ---
 @st.cache_data
 def load_data():
-    return pd.read_csv("cleaned_store_data_final.csv")
+    return pd.read_csv("cleaned_store_data_embedded.csv")
 
 df = load_data()
+st.title("📊 QSR CEO Performance Bot")
 
-# --- Sidebar ---
-st.sidebar.title("🧠 QSR CEO Q&A Bot")
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+st.markdown("Ask any question about store performance:")
 
-if "qa_history" not in st.session_state:
-    st.session_state.qa_history = []
+query = st.text_input("💬 Enter your question", key="input")
 
-# --- Title ---
-st.markdown("<h2 style='text-align:center;'>QSR CEO Intelligence Bot</h2>", unsafe_allow_html=True)
+if query:
+    with st.spinner("Analyzing your query..."):
+        df.columns = df.columns.str.strip()
 
-# --- User Question ---
-user_question = st.text_input("Ask any store-level performance question:", placeholder="E.g. Which store had highest revenue in May 2025?")
+        def normalize_months(df):
+            month_col = df['Month'].astype(str).str.strip()
+            df['Month'] = month_col.str.replace(r'[-]', ' ', regex=True).str.replace(r'[^\w\s]', '', regex=True).str.lower()
+            df['Month'] = df['Month'].str.replace(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*([0-9]{2,4})',
+                                                   lambda m: pd.to_datetime(f"01 {m.group(1)} {m.group(2)}", errors='coerce').strftime('%b %y')
+                                                   if pd.to_datetime(f"01 {m.group(1)} {m.group(2)}", errors='coerce') else m.group(0),
+                                                   regex=True)
+            return df
 
-# --- GPT Logic Bank ---
-logic_blocks = []
+        df = normalize_months(df)
 
-all_metrics = [c for c in df.columns if c not in ["Month", "Store"]]
+        logic_blocks = []
 
-for metric in all_metrics:
-    metric_safe = metric.replace(" ", "_").lower()
-    logic_blocks.extend([
-        (f"highest {metric.lower()}",
-         lambda df, m=metric: df[df[m] == df[m].max()][["Month", "Store", m]],
-         f"highest_{metric_safe}.csv"),
+        all_metrics = [c for c in df.columns if c not in ["Month", "Store"]]
 
-        (f"lowest {metric.lower()}",
-         lambda df, m=metric: df[df[m] == df[m].min()][["Month", "Store", m]],
-         f"lowest_{metric_safe}.csv"),
+        for metric in all_metrics:
+            metric_safe = metric.replace(" ", "_").lower()
+            logic_blocks.extend([
+                (f"highest {metric.lower()}",
+                 lambda df, m=metric: df[df[m] == df[m].max()][["Month", "Store", m]],
+                 f"highest_{metric_safe}.csv"),
 
-        (f"top stores by {metric.lower()}",
-         lambda df, m=metric: df.sort_values(by=m, ascending=False)[["Month", "Store", m]].head(10),
-         f"top_stores_{metric_safe}.csv"),
+                (f"lowest {metric.lower()}",
+                 lambda df, m=metric: df[df[m] == df[m].min()][["Month", "Store", m]],
+                 f"lowest_{metric_safe}.csv"),
 
-        (f"{metric.lower()} as % of sales",
-         lambda df, m=metric: df.assign(**{f"{metric} %": 100 * df[m] / df['Net Sales']}).sort_values(by=f"{metric} %", ascending=False)[["Month", "Store", f"{metric} %"]],
-         f"percent_sales_{metric_safe}.csv"),
+                (f"top stores by {metric.lower()}",
+                 lambda df, m=metric: df.sort_values(by=m, ascending=False)[["Month", "Store", m]].head(10),
+                 f"top_stores_{metric_safe}.csv"),
 
-        (f"MoM change in {metric.lower()}",
-         lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change().rename("MoM Change").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
-         f"mom_change_{metric_safe}.csv"),
+                (f"{metric.lower()} as % of sales",
+                 lambda df, m=metric: df.assign(**{f"{metric} %": 100 * df[m] / df['Net Sales']}).sort_values(by=f"{metric} %", ascending=False)[["Month", "Store", f"{metric} %"]],
+                 f"percent_sales_{metric_safe}.csv"),
 
-        (f"YoY growth in {metric.lower()}",
-         lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change(periods=12).rename("YoY Growth").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
-         f"yoy_growth_{metric_safe}.csv"),
+                (f"MoM change in {metric.lower()}",
+                 lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change().rename("MoM Change").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
+                 f"mom_change_{metric_safe}.csv"),
 
-        (f"anomaly in {metric.lower()}",
-         lambda df, m=metric: df[(df[m] - df[m].mean()).abs() > 3 * df[m].std()][["Month", "Store", m]],
-         f"anomaly_{metric_safe}.csv"),
+                (f"YoY growth in {metric.lower()}",
+                 lambda df, m=metric: df.sort_values(['Store', 'Month']).groupby('Store')[m].pct_change(periods=12).rename("YoY Growth").reset_index().join(df[['Month', 'Store']], how='left', lsuffix='_drop').drop(columns=['index_drop']),
+                 f"yoy_growth_{metric_safe}.csv"),
 
-        (f"gross margin % for {metric.lower()}",
-         lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[["Month", "Store", "Gross_Margin_Pct"]],
-         f"gross_margin_pct.csv"),
+                (f"anomaly in {metric.lower()}",
+                 lambda df, m=metric: df[(df[m] - df[m].mean()).abs() > 3 * df[m].std()][["Month", "Store", m]],
+                 f"anomaly_{metric_safe}.csv"),
 
-        (f"store profitability ranking by {metric.lower()}",
-         lambda df: df.groupby('Store')['Net Sales'].sum().sort_values(ascending=False).reset_index().rename(columns={'Net Sales': 'Total Revenue'}),
-         f"profit_ranking_{metric_safe}.csv")
-    ])
+                (f"EBITDA calculation",
+                 lambda df: df.assign(EBITDA=df['Net Sales'] - df[['COGS (food +packaging)', 'Aggregator commission', 'Marketing & advertisement', 'store Labor Cost', 'Utility Cost', 'Other opex expenses']].sum(axis=1))[["Month", "Store", "EBITDA"]],
+                 f"ebitda.csv"),
 
-# --- Bot Logic ---
-if user_question:
-    user_input = user_question.lower()
-    answer = None
-    matched_logic = None
+                (f"gross margin %",
+                 lambda df: df.assign(Gross_Margin_Pct=100 * df['Gross margin'] / df['Gross Sales'])[["Month", "Store", "Gross_Margin_Pct"]],
+                 f"gross_margin_pct.csv"),
 
-    for phrase, logic_func, fname in logic_blocks:
-        if phrase in user_input:
-            try:
-                answer_df = logic_func(df)
-                answer = f"Answer for: **{phrase}**"
-                matched_logic = (answer_df, fname)
-                break
-            except Exception as e:
-                answer = f"⚠️ Logic failed: {str(e)}"
-                break
+                (f"store profitability ranking",
+                 lambda df: df.groupby('Store')['Net Sales'].sum().sort_values(ascending=False).reset_index().rename(columns={'Net Sales': 'Total Revenue'}),
+                 f"store_profitability.csv")
+            ])
 
-    if matched_logic:
-        df_temp, fname = matched_logic
-        st.write(answer)
-        st.dataframe(df_temp)
+        match_found = False
+        for keyword, func, filename in logic_blocks:
+            if keyword in query.lower():
+                try:
+                    df_temp = func(df)
+                    st.success(f"🔍 Answer for: {keyword}")
+                    st.dataframe(df_temp)
 
-        # Optional Chart
-        if df_temp.shape[1] == 3:
-            fig, ax = plt.subplots()
-            df_temp.plot(x="Store", y=df_temp.columns[-1], kind="bar", ax=ax)
-            st.pyplot(fig)
+                    csv = df_temp.to_csv(index=False)
+                    st.download_button("📥 Download Table as CSV", csv, file_name=filename)
 
-        # Download
-        csv_bytes = df_temp.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download CSV", data=csv_bytes, file_name=fname, mime="text/csv")
+                    # Plot
+                    if len(df_temp.columns) >= 3 and df_temp.dtypes[-1] in [float, int]:
+                        fig, ax = plt.subplots(figsize=(10, 4))
+                        df_temp.plot(kind='bar', x=df_temp.columns[1], y=df_temp.columns[2], ax=ax)
+                        st.pyplot(fig)
+                    match_found = True
+                    break
+                except Exception as e:
+                    st.error(f"Logic failed: {e}")
+                    match_found = True
+                    break
 
-    else:
-        # Fallback to GPT
-        with st.spinner("Thinking..."):
-            try:
-                messages = [
-                    {"role": "system", "content": "You are a helpful business analyst."},
-                    {"role": "user", "content": f"DataFrame:\n{df.head(100).to_csv(index=False)}\n\nQuestion: {user_question}"}
-                ]
-                completion = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=messages,
-                    temperature=0.2
-                )
-                response = completion.choices[0].message.content.strip()
-                st.markdown(response)
-            except Exception as e:
-                st.error(f"GPT failed: {e}")
-
-    st.session_state.qa_history.append((user_question, answer))
-
-# --- Sidebar History ---
-if st.session_state.qa_history:
-    st.sidebar.markdown("### 🕓 Q&A History")
-    for q, a in reversed(st.session_state.qa_history[-10:]):
-        st.sidebar.markdown(f"**Q:** {q}  \n**A:** {a or 'No answer'}")
-
+        if not match_found:
+            st.warning("🤖 No logic matched. Please rephrase the question or try a simpler query.")
