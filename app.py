@@ -68,4 +68,13 @@ if query:
                 df_temp.iloc[:, 1:].plot(kind="bar", ax=ax2)
                 ax2.set_title("Chart Based on Answer")
                 st.pyplot(fig2)
-                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv"
+                st.download_button("📥 Download Table as CSV", df_temp.to_csv(index=False), file_name="answer_table.csv")
+
+        st.session_state.qa_history.append((query, answer))
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+
+with st.sidebar:
+    st.markdown("### 🔁 Q&A History")
+    for q, a in st.session_state.qa_history[-10:]:
+        st.markdown(f"**Q:** {q}\n\n*A:* {a}")
