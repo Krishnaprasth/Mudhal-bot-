@@ -1,28 +1,61 @@
-
 import streamlit as st
-from nlp_engine import nlp_router
+import pandas as pd
+import openai
+from pathlib import Path
 
-st.set_page_config(page_title="QSR CEO Bot", layout="centered")
+# ===== CONFIGURATION =====
+DATA_FILE = "QSR_CEO_CLEANED_FULL.csv"  # Your exact filename
+AI_MODEL = "gpt-4-1106-preview"         # Latest model for JSON support
 
-# Sidebar for Q&A history
-if "history" not in st.session_state:
-    st.session_state.history = []
+# ===== DATA LOADING =====
+@st.cache_data
+def load_data():
+    data_path = Path(__file__).parent / "data" / DATA_FILE
+    try:
+        df = pd.read_csv(data_path)
+        st.toast(f"✅ Loaded {len(df)} rows from {DATA_FILE}", icon="✅")
+        return df
+    except Exception as e:
+        st.error(f"Failed to load {DATA_FILE}: {str(e)}")
+        return None
 
-st.sidebar.title("🧠 Q&A History")
-for q, a in st.session_state.history:
-    st.sidebar.markdown(f"**Q:** {q}\n**A:** {a}")
+# ===== STREAMLIT UI =====
+st.set_page_config(layout="wide", page_title=f"QSR Analytics - {DATA_FILE}")
+df = load_data()
 
-st.title("🍔 QSR CEO Performance Bot")
-
-user_input = st.text_input("Ask a question about your stores:", placeholder="e.g. Which store had highest EBITDA in May 2025?")
-if user_input:
-    response = nlp_router(user_input)
-    st.write("### Answer")
-    st.write(response)
-    st.session_state.history.append((user_input, response))
-
-if st.sidebar.button("Download Q&A Log"):
-    import pandas as pd
-    df_log = pd.DataFrame(st.session_state.history, columns=["Question", "Answer"])
-    df_log.to_csv("qna_log.csv", index=False)
-    st.sidebar.download_button("Download", data=open("qna_log.csv", "rb"), file_name="QSR_QnA_Log.csv")
+if df is not None:
+    # Securely handle OpenAI key
+    if "openai_key" not in st.session_state:
+        with st.sidebar:
+            st.session_state.openai_key = st.text_input("🔑 OpenAI Key", type="password")
+    
+    if st.session_state.openai_key:
+        openai.api_key = st.session_state.openai_key
+        
+        # Dynamic query interface
+        tab1, tab2 = st.tabs(["Ask Question", "View Data"])
+        
+        with tab1:
+            query = st.text_area("📝 Ask about your data:", height=100)
+            if query:
+                with st.spinner("🧠 Analyzing..."):
+                    response = openai.ChatCompletion.create(
+                        model=AI_MODEL,
+                        response_format={ "type": "json_object" },
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": f"""You're a QSR data analyst. Analyze this data with key columns: 
+                                {df.columns.tolist()}. Respond in JSON format with 'insight', 'trend', and 'action_items'."""
+                            },
+                            {
+                                "role": "user",
+                                "content": query
+                            }
+                        ]
+                    )
+                    result = json.loads(response.choices[0].message.content)
+                    st.json(result)
+        
+        with tab2:
+            st.dataframe(df.style.format({'Amount (₹ Lakhs)': '₹{:,.1f}'}))
