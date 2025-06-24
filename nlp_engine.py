@@ -3,86 +3,34 @@ import re
 from openai import OpenAI
 import os
 
-# Load data
+# Load the store performance dataset
 df_store = pd.read_csv("QSR_CEO_Complete_Lakhs.csv")
-question_df = pd.read_csv("qsr_ceo_100000_questions_storecodes.csv")
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# --- Helper functions ---
-def normalize_question(text):
-    text = text.lower()
-    replacements = {
-        r"sales": "net sales",
-        r"gross sales": "gross sales",
-        r"online sales": "online sales",
-        r"offline sales": "offline sales",
-        r"ebitda": "ebitda",
-        r"gst": "gst",
-        r"rent": "rent",
-        r"labour|labor": "labor cost",
-        r"aggregator": "aggregator commission",
-    }
-    for pattern, replacement in replacements.items():
-        text = re.sub(pattern, replacement, text)
-    return text
+# Month mapping: "june 24" → "24-Jun"
+month_map = {
+    'january 24': '24-Jan', 'february 24': '24-Feb', 'march 24': '24-Mar', 'april 24': '24-Apr',
+    'may 24': '24-May', 'june 24': '24-Jun', 'july 24': '24-Jul', 'august 24': '24-Aug',
+    'september 24': '24-Sep', 'october 24': '24-Oct', 'november 24': '24-Nov', 'december 24': '24-Dec',
+    'january 25': '25-Jan', 'february 25': '25-Feb', 'march 25': '25-Mar', 'april 25': '25-Apr',
+    'may 25': '25-May', 'june 25': '25-Jun', 'july 25': '25-Jul', 'august 25': '25-Aug',
+    'september 25': '25-Sep', 'october 25': '25-Oct', 'november 25': '25-Nov', 'december 25': '25-Dec'
+}
 
-def extract_store_codes(text, store_list):
-    return [store for store in store_list if store.lower() in text.lower()]
+# Common keyword replacements
+metric_aliases = {
+    "revenue": "net sales",
+    "sales": "net sales",
+    "gross revenue": "gross sales",
+    "ebitda": "ebitda",
+    "rent": "rent",
+    "commission": "aggregator commission",
+    "labor": "labor cost",
+    "labour": "labor cost"
+}
 
-def get_top_store_by_metric(month, metric):
-    df_month = df_store[
-        (df_store['Month'].str.lower() == month.lower()) &
-        (df_store['Metric'].str.lower() == metric.lower())
-    ]
-    if df_month.empty:
-        return "No data found for that month/metric."
-    top_row = df_month.sort_values(by="Amount", ascending=False).iloc[0]
-    return f"Top store by {metric} in {month} is {top_row['Store']} with ₹{top_row['Amount']:.1f} lakhs."
-
-# GPT fallback
-def gpt_fallback(query):
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful assistant that answers questions on QSR store data. "
-                    "The data includes columns: Month, Store, Metric, and Amount (in lakhs)."
-                )
-            },
-            {"role": "user", "content": query}
-        ],
-        temperature=0.2
-    )
-    return response.choices[0].message.content
-
-# --- NLP Router ---
-def nlp_router(user_query):
-    query = normalize_question(user_query)
-    store_codes = df_store['Store'].unique().tolist()
-    matched_stores = extract_store_codes(query, store_codes)
-
-    month_match = None
-    metric_match = None
-
-    for month in df_store['Month'].unique():
-        if month.lower() in query:
-            month_match = month
-            break
-
-    for metric in df_store['Metric'].unique():
-        if metric.lower() in query:
-            metric_match = metric
-            break
-
-    if any(word in query for word in ["max", "highest", "top"]) and month_match and metric_match:
-        return get_top_store_by_metric(month_match, metric_match)
-
-    if month_match and metric_match:
-        return get_top_store_by_metric(month_match, metric_match)
-
-    # GPT fallback
-    return gpt_fallback(user_query)
+# Normalize query for better matching
+def normalize_query(text):
+    text = text.lo
