@@ -1,61 +1,60 @@
 import streamlit as st
 import pandas as pd
-import openai
 from pathlib import Path
+import os
 
-# ===== CONFIGURATION =====
-DATA_FILE = "QSR_CEO_CLEANED_FULL.csv"  # Your exact filename
-AI_MODEL = "gpt-4-1106-preview"         # Latest model for JSON support
+# ========== 1. SETUP ==========
+st.set_page_config(layout="wide", page_title="QSR Analytics Bot")
 
-# ===== DATA LOADING =====
+# ========== 2. RELIABLE DATA LOADING ==========
 @st.cache_data
 def load_data():
-    data_path = Path(__file__).parent / "data" / DATA_FILE
+    """Handles all possible file locations and errors"""
     try:
-        df = pd.read_csv(data_path)
-        st.toast(f"✅ Loaded {len(df)} rows from {DATA_FILE}", icon="✅")
-        return df
+        # Try multiple possible paths (including root directory)
+        possible_paths = [
+            Path("QSR_CEO_CLEANED_FULL.csv"),          # Root (your current setup)
+            Path("app/data/QSR_CEO_CLEANED_FULL.csv"),  # Alternative
+            Path("data/QSR_CEO_CLEANED_FULL.csv")       # Another alternative
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                df = pd.read_csv(path)
+                st.toast(f"✅ Data loaded from: {path}", icon="✅")
+                return df
+        
+        # If no path worked
+        st.error(f"❌ File not found. Checked: {[str(p) for p in possible_paths]}")
+        return None
+        
     except Exception as e:
-        st.error(f"Failed to load {DATA_FILE}: {str(e)}")
+        st.error(f"⚠️ Error loading file: {str(e)}")
         return None
 
-# ===== STREAMLIT UI =====
-st.set_page_config(layout="wide", page_title=f"QSR Analytics - {DATA_FILE}")
+# ========== 3. MAIN APP ==========
+st.title("🍔 QSR CEO Analytics Bot")
+
+# Load data
 df = load_data()
 
 if df is not None:
-    # Securely handle OpenAI key
-    if "openai_key" not in st.session_state:
-        with st.sidebar:
-            st.session_state.openai_key = st.text_input("🔑 OpenAI Key", type="password")
+    # Show basic info
+    st.subheader("Data Preview")
+    st.write(f"Loaded {len(df)} rows")
+    st.dataframe(df.head())
+
+    # Add your analytics here
+    st.subheader("Sales Trend")
+    st.line_chart(df.set_index("Month")["Amount (₹ Lakhs)"])
     
-    if st.session_state.openai_key:
-        openai.api_key = st.session_state.openai_key
-        
-        # Dynamic query interface
-        tab1, tab2 = st.tabs(["Ask Question", "View Data"])
-        
-        with tab1:
-            query = st.text_area("📝 Ask about your data:", height=100)
-            if query:
-                with st.spinner("🧠 Analyzing..."):
-                    response = openai.ChatCompletion.create(
-                        model=AI_MODEL,
-                        response_format={ "type": "json_object" },
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": f"""You're a QSR data analyst. Analyze this data with key columns: 
-                                {df.columns.tolist()}. Respond in JSON format with 'insight', 'trend', and 'action_items'."""
-                            },
-                            {
-                                "role": "user",
-                                "content": query
-                            }
-                        ]
-                    )
-                    result = json.loads(response.choices[0].message.content)
-                    st.json(result)
-        
-        with tab2:
-            st.dataframe(df.style.format({'Amount (₹ Lakhs)': '₹{:,.1f}'}))
+    # Example AI integration
+    if "openai_key" not in st.session_state:
+        st.session_state.openai_key = st.text_input("Enter OpenAI Key (optional):", type="password")
+
+# ========== 4. DEBUG INFO ==========
+with st.expander("ℹ️ Debug Information", expanded=False):
+    st.write("Current directory:", os.getcwd())
+    st.write("Files in directory:", os.listdir())
+    if df is not None:
+        st.write("Data columns:", df.columns.tolist())
