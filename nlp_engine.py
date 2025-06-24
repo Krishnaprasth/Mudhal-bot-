@@ -1,24 +1,25 @@
-
 import faiss
 import numpy as np
 import pandas as pd
 import openai
 from sentence_transformers import SentenceTransformer
 
-# Load data and index
-df = pd.read_csv("QSR_CEO_Full_Integrated.csv")
-qa_data = pd.read_csv("QSR_CEO_NLP_QA_Preview.csv") if "QSR_CEO_NLP_QA_Preview.csv" in globals() else pd.DataFrame({
-    "Question": ["Which store had the highest net sales in April 2024?"],
-    "Answer": ["HSR with ₹14.5 Lakhs net sales."]
-})
-index = faiss.read_index("qa_faiss_index.pkl")
+# Load cleaned store-level financial data
+df = pd.read_csv("QSR_CEO_CLEANED_FULL.csv")  # ✅ Correct file name
 
-# Load embedding model
+# Load FAISS index and vectors
+index = faiss.read_index("qa_faiss_index.pkl")
+qa_vectors = np.load("qa_vectors.npy")
+
+# Load question bank
+with open("qa_question_bank.txt", "r") as f:
+    questions = [line.strip() for line in f.readlines()]
+
+# Load sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
-qa_embeddings = np.load("qa_vectors.npy") if "qa_vectors.npy" in globals() else model.encode(qa_data["Question"].tolist(), normalize_embeddings=True)
 
 def gpt_fallback(query):
-    openai.api_key = "YOUR_OPENAI_API_KEY"
+    openai.api_key = "YOUR_OPENAI_API_KEY"  # 🔁 Replace with your actual API key or load securely
     try:
         response = openai.chat.completions.create(
             model="gpt-4",
@@ -31,9 +32,10 @@ def gpt_fallback(query):
 
 def nlp_router(query):
     try:
-        query_vec = model.encode([query], normalize_embeddings=True)
-        D, I = index.search(np.array(query_vec), k=1)
-        best_match = qa_data.iloc[I[0][0]]["Answer"]
-        return best_match
+        # Encode the query and find the best match from pre-trained questions
+        query_vec = model.encode([query], normalize_embeddings=True).astype("float32")
+        _, I = index.search(query_vec, k=1)
+        matched_question = questions[I[0][0]]
+        return f"🔎 Matched: {matched_question}"
     except Exception:
         return gpt_fallback(query)
