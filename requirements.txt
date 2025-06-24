@@ -1,0 +1,7 @@
+
+streamlit
+pandas
+openpyxl
+faiss-cpu
+sentence-transformers
+openai>=1.0.0
