@@ -10,125 +10,96 @@ st.set_page_config(
     layout="wide"
 )
 
-# ========== STYLES ==========
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] {
-        background: linear-gradient(135deg, #f16529, #e44d26);
-    }
-    .question-bank {
-        padding: 10px;
-        border-radius: 10px;
-        margin: 5px 0;
-        cursor: pointer;
-    }
-    .question-bank:hover {
-        background-color: #ffffff20;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # ========== DATA LOADING ==========
 @st.cache_data
 def load_data():
     try:
         df = pd.read_csv(Path(__file__).parent / "QSR_CEO_CLEANED_FULL.csv")
+        # Convert 'Month' to datetime and extract year/month
+        df['Month'] = pd.to_datetime(df['Month'], format='%B')
+        df['Year'] = df['Month'].dt.year
+        df['MonthName'] = df['Month'].dt.month_name()
         return df
     except Exception as e:
         st.error(f"Data loading failed: {str(e)}")
-        return None
+        return pd.DataFrame()  # Return empty DataFrame instead of None
 
 df = load_data()
 
-# ========== SESSION STATE ==========
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hi! I'm BurritoBot 🌯 Ask me about your QSR data!"}]
+# ========== ANALYTICS FUNCTIONS ==========
+def get_top_store(month="November", year=2024):
+    if df.empty:
+        return "No data available"
+    
+    try:
+        # Filter for November 2024
+        nov_data = df[(df['MonthName'] == month) & (df['Year'] == year)]
+        
+        if nov_data.empty:
+            return f"No data found for {month} {year}"
+            
+        # Find store with max sales
+        top_store = nov_data.loc[nov_data['Amount (₹ Lakhs)'].idxmax()]
+        return f"🏆 Top store in {month} {year}: {top_store['Store']} with ₹{top_store['Amount (₹ Lakhs)']}L"
+    
+    except Exception as e:
+        return f"Analysis error: {str(e)}"
 
-if "answered_questions" not in st.session_state:
-    st.session_state.answered_questions = []
-
-# ========== CHAT FUNCTIONS ==========
+# ========== CHAT FUNCTION ==========
 def get_ai_response(query):
-    if df is None:
+    if df.empty:
         return "Data not loaded. Please check CSV file."
     
-    prompt = f"""Analyze this QSR data:
-    Columns: {df.columns.tolist()}
-    First row: {df.iloc[0].to_dict()}
+    # Handle specific queries directly
+    if "highest sales in nov" in query.lower():
+        return get_top_store()
     
-    Question: {query}
-    Answer concisely with insights:"""
-    
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-    
-    # Store answered question
-    if query not in [q['question'] for q in st.session_state.answered_questions]:
-        st.session_state.answered_questions.append({
-            "question": query,
-            "answer": response.choices[0].message.content
-        })
-    
-    return response.choices[0].message.content
+    try:
+        prompt = f"""Analyze this QSR data with columns: {df.columns.tolist()}
+        Question: {query}
+        Answer concisely with insights:"""
+        
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        return f"AI error: {str(e)}"
 
-# ========== SIDEBAR ==========
-with st.sidebar:
-    st.title("🌯 BurritoBot")
-    st.image("https://cdn-icons-png.flaticon.com/512/2927/2927347.png", width=100)
-    
-    # OpenAI Key Input
-    if "openai_key" not in st.session_state:
-        st.session_state.openai_key = st.text_input("🔑 OpenAI Key", type="password")
-        openai.api_key = st.session_state.openai_key
-    
-    # Question Bank
-    st.subheader("💡 Sample Questions")
-    sample_questions = [
-        "Show sales trends for Mumbai",
-        "Compare Delhi and Bangalore stores",
-        "What's our best performing month?",
-        "Find stores with declining sales"
-    ]
-    
-    for q in sample_questions:
-        if st.button(f"🌯 {q}", key=f"sample_{q}"):
-            st.session_state.messages.append({"role": "user", "content": q})
-    
-    # Answered Questions History
-    st.subheader("📚 Answered Questions")
-    for i, qa in enumerate(st.session_state.answered_questions[-5:]):  # Show last 5
-        with st.expander(f"Q: {qa['question']}"):
-            st.write(qa['answer'])
-
-# ========== MAIN CHAT ==========
+# ========== MAIN APP ==========
 st.title("🌯 BurritoBot QSR Analytics")
+
+if not df.empty:
+    # Quick analysis buttons
+    st.subheader("Quick Analysis")
+    if st.button("🏆 Show top store in November 2024"):
+        result = get_top_store()
+        st.write(result)
+
+# Chat interface
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hi! Ask me about store performance"}]
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-if prompt := st.chat_input("Ask about your QSR data..."):
+if prompt := st.chat_input("Ask about store performance..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
     
-    with st.spinner("🌯 Wrapping up your answer..."):
+    with st.spinner("Analyzing..."):
         response = get_ai_response(prompt)
         st.session_state.messages.append({"role": "assistant", "content": response})
     
     with st.chat_message("assistant"):
         st.write(response)
 
-# ========== DATA VISUALIZATION ==========
-if df is not None:
-    with st.expander("📊 Data Dashboard"):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Raw Data")
-            st.dataframe(df.head())
-        with col2:
-            st.subheader("Sales Trend")
-            st.line_chart(df.set_index("Month")["Amount (₹ Lakhs)"])  # Fixed this line
+# Data preview
+if not df.empty:
+    with st.expander("📊 View Raw Data"):
+        st.dataframe(df)
