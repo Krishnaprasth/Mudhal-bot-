@@ -1,4 +1,3 @@
-
 import faiss
 import numpy as np
 import pandas as pd
@@ -6,7 +5,7 @@ import openai
 from sentence_transformers import SentenceTransformer
 
 # Load data and index
-df = pd.read_csv("QSR_CEO_Full_Integrated.csv")
+df = pd.read_csv("QSR_CEO_CLEANED_FULL.csv")  # ✅ Fixed filename
 qa_data = pd.read_csv("QSR_CEO_NLP_QA_Preview.csv") if "QSR_CEO_NLP_QA_Preview.csv" in globals() else pd.DataFrame({
     "Question": ["Which store had the highest net sales in April 2024?"],
     "Answer": ["HSR with ₹14.5 Lakhs net sales."]
