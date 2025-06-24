@@ -131,4 +131,4 @@ if df is not None:
             st.dataframe(df.head())
         with col2:
             st.subheader("Sales Trend")
-            st.line_chart(df
+            st.line_chart(df.set_index("Month")["Amount (₹ Lakhs)"])  # Fixed this line
