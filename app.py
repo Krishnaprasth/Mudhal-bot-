@@ -129,4 +129,6 @@ if df is not None:
         with col1:
             st.subheader("Raw Data")
             st.dataframe(df.head())
-        with col
+        with col2:
+            st.subheader("Sales Trend")
+            st.line_chart(df
