@@ -1,13 +1,16 @@
-
 import pandas as pd
 import re
-import openai
+from openai import OpenAI
+import os
 
-# Load data from CSV
+# Load data
 df_store = pd.read_csv("QSR_CEO_Complete_Lakhs.csv")
 question_df = pd.read_csv("qsr_ceo_100000_questions_storecodes.csv")
 
-# NLP Parsing Helper Functions
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Helper functions
 def normalize_question(text):
     text = text.lower()
     replacements = {
@@ -27,20 +30,19 @@ def normalize_question(text):
     return text
 
 def extract_store_codes(text, store_list):
-    mentioned = [store for store in store_list if store.lower() in text.lower()]
-    return mentioned
+    return [store for store in store_list if store.lower() in text.lower()]
 
-# Sample Logic Function
 def get_top_store_by_metric(month, metric):
-    df_month = df_store[(df_store['Month'].str.lower() == month.lower()) & (df_store['Metric'].str.lower() == metric.lower())]
+    df_month = df_store[(df_store['Month'].str.lower() == month.lower()) & 
+                        (df_store['Metric'].str.lower() == metric.lower())]
     if df_month.empty:
         return "No data found for that month/metric."
     top_row = df_month.sort_values(by="Amount", ascending=False).iloc[0]
     return f"Top store by {metric} in {month} is {top_row['Store']} with ₹{top_row['Amount']} lakhs."
 
-# GPT fallback if no match is found
+# ✅ GPT fallback (OpenAI v1)
 def gpt_fallback(query):
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant for analyzing QSR store financial data."},
@@ -48,9 +50,9 @@ def gpt_fallback(query):
         ],
         temperature=0.2
     )
-    return response.choices[0].message["content"]
+    return response.choices[0].message.content
 
-# NLP Router
+# Main NLP router
 def nlp_router(user_query):
     query = normalize_question(user_query)
     store_codes = df_store['Store'].unique().tolist()
