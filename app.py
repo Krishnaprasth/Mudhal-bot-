@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import openai
-import re
 
 # Load your cleaned data
 @st.cache_data
@@ -13,25 +13,21 @@ df = load_data()
 st.set_page_config(layout="wide")
 st.title("📊 Store Metrics HQ – Your Query Buddy")
 
-# Store conversation state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Get user input
 user_q = st.text_input(
     "Ask a question about store performance:",
     placeholder="e.g., Which store took the longest to turn EBITDA positive?",
     key="q",
 )
 
-# Track referenced store
 def detect_store_name(q):
-    for store in df["Store"].unique():
+    for store in df["store"].unique():
         if store.lower() in q.lower():
             return store
     return None
 
-# GPT fallback that generates pandas code + insight
 def gpt_fallback_query(user_q, df_sample, columns):
     prompt = f"""
 You are a data analyst for a restaurant chain with monthly store data.
@@ -56,7 +52,6 @@ Return only the code and the summary.
     )
     content = response.choices[0].message.content
 
-    # Split code and summary by the separator
     if "---SUMMARY---" in content:
         code, summary = content.split("---SUMMARY---", 1)
     else:
@@ -65,12 +60,9 @@ Return only the code and the summary.
     return code.strip(), summary.strip()
 
 def safe_exec(code_str, local_vars):
-    # Limit builtins for safety
-    allowed_builtins = {"pd": pd}
-    exec(code_str, {"__builtins__": None, "pd": pd}, local_vars)
+    exec(code_str, {"__builtins__": None, "pd": pd, "np": np}, local_vars)
 
 def execute_gpt_code(user_q):
-    # Provide a small data sample for prompt (first 20 rows)
     df_sample = df.head(20).to_csv(index=False)
     columns = list(df.columns)
 
@@ -91,24 +83,21 @@ def execute_gpt_code(user_q):
     if summary:
         st.markdown(f"**Insight:** {summary}")
 
-# === Structured logic functions ===
+# Structured Logic Examples
 
-# Example: Slowest to EBITDA positive
 def get_slowest_to_profit():
     df_copy = df.copy()
-    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
-    df_sorted = df_copy.sort_values("Month_Parsed")
+    df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
+    df_sorted = df_copy.sort_values("month_parsed")
 
-    store_groups = df_sorted.groupby("Store")
     time_to_profit = {}
-
-    for store, group in store_groups:
-        group = group.sort_values("Month_Parsed")
-        group["Cum_EBITDA"] = group["Outlet EBITDA"].cumsum()
-        profit_month = group[group["Cum_EBITDA"] > 0]
+    for store, group in df_sorted.groupby("store"):
+        group = group.sort_values("month_parsed")
+        group["cum_ebitda"] = group["outlet_ebitda"].cumsum()
+        profit_month = group[group["cum_ebitda"] > 0]
         if not profit_month.empty:
-            start = group["Month_Parsed"].min()
-            end = profit_month["Month_Parsed"].iloc[0]
+            start = group["month_parsed"].min()
+            end = profit_month["month_parsed"].iloc[0]
             time_to_profit[store] = (end - start).days
 
     if not time_to_profit:
@@ -116,11 +105,10 @@ def get_slowest_to_profit():
 
     slowest = max(time_to_profit, key=time_to_profit.get)
     days_taken = time_to_profit[slowest]
-    store_df = df_sorted[df_sorted["Store"] == slowest].sort_values("Month_Parsed")
+    store_df = df_sorted[df_sorted["store"] == slowest].sort_values("month_parsed")
     commentary = gpt_generate_commentary(store_df, "why it took the store so long to turn EBITDA positive")
     return f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
 
-# GPT commentary engine
 def gpt_generate_commentary(store_df, topic):
     prompt = f"""
 You are a data analyst for a QSR chain. Given the following store data:
@@ -136,33 +124,69 @@ Write a short 2-3 sentence insight about: {topic}. Mention key patterns using av
     )
     return response.choices[0].message.content.strip()
 
-# Example: Store P&L for FY24
 def get_store_pl():
     store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
     if not store:
         return "❌ Please mention a valid store name."
 
     df_copy = df.copy()
-    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
-    df_copy = df_copy[(df_copy["Month_Parsed"] >= "2023-04-01") & (df_copy["Month_Parsed"] <= "2024-03-31")]
-    df_store = df_copy[df_copy["Store"].str.lower() == store.lower()].sort_values("Month_Parsed")
+    df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
+    df_copy = df_copy[(df_copy["month_parsed"] >= "2023-04-01") & (df_copy["month_parsed"] <= "2024-03-31")]
+    df_store = df_copy[df_copy["store"].str.lower() == store.lower()].sort_values("month_parsed")
 
     if df_store.empty:
         return f"❌ No data found for {store} in FY24."
 
-    st.dataframe(df_store[["Month", "Net Sales", "Gross margin", "Outlet EBITDA", "Rent"]].reset_index(drop=True))
+    st.dataframe(df_store[["month", "net_sales", "gross_sales", "outlet_ebitda", "rent"]].reset_index(drop=True))
     return f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
 
-# Semantic match for known questions
+def get_mom_growth(threshold=5, months=3):
+    store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
+    if not store:
+        return "❌ Please mention a valid store name."
+    df_store = df[df["store"].str.lower() == store.lower()].copy()
+    df_store["month_parsed"] = pd.to_datetime(df_store["month"], format="%B %Y")
+    df_store.sort_values("month_parsed", inplace=True)
+    df_store["mom_growth"] = df_store["net_sales"].pct_change() * 100
+    # Check for consecutive growth months >= threshold
+    count = 0
+    for val in df_store["mom_growth"].dropna():
+        if val >= threshold:
+            count += 1
+        else:
+            count = 0
+        if count >= months:
+            st.write(f"✅ {store} has {count} consecutive months with MoM sales growth >= {threshold}%.")
+            break
+    else:
+        st.write(f"❌ {store} does not have {months} consecutive months with MoM sales growth >= {threshold}%.")
+    st.dataframe(df_store[["month", "net_sales", "mom_growth"]])
+    return "📈 MoM growth check complete."
+
+def get_correlation_metric(metric1="marketing_&_advertisement", metric2="outlet_ebitda"):
+    corr = df.groupby("store")[[metric1, metric2]].corr().iloc[0::2,-1].reset_index()
+    st.dataframe(corr[["store", metric1]])
+    return f"📊 Correlation between {metric1} and {metric2} per store shown above."
+
+def get_missing_data_report():
+    missing = df.isnull().sum()
+    st.dataframe(missing)
+    return "⚠️ Missing data report shown."
+
 def semantic_match(query):
-    query_lower = query.lower()
-    if "turn" in query_lower and "ebitda positive" in query_lower:
+    q = query.lower()
+    if "turn" in q and "ebitda positive" in q:
         return "get_slowest_to_profit()"
-    if "p&l" in query_lower or "pl" in query_lower:
+    if "p&l" in q or "pl" in q:
         return "get_store_pl()"
+    if "mom growth" in q:
+        return "get_mom_growth()"
+    if "correlation" in q:
+        return "get_correlation_metric()"
+    if "missing data" in q or "null" in q or "empty" in q:
+        return "get_missing_data_report()"
     return None
 
-# Main execution logic
 if user_q:
     last_store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
     logic = semantic_match(user_q)
@@ -176,7 +200,6 @@ if user_q:
             execute_gpt_code(user_q)
         st.session_state.chat_history.append({"q": user_q, "a": "Answered by GPT fallback", "store": last_store})
 
-# Display chat history (last 5)
 if st.session_state.chat_history:
     st.markdown("---")
     for i, entry in enumerate(reversed(st.session_state.chat_history[-5:])):
