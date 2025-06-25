@@ -1,89 +1,73 @@
 import streamlit as st
 import pandas as pd
-from pathlib import Path
+import matplotlib.pyplot as plt
+import openai
 
-# ========== DATA LOADING ==========
+# Load your QSR data
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_csv(Path(__file__).parent / "QSR_CEO_CLEANED_FULL.csv")
+    return pd.read_csv('QSR_CEO_CLEANED_FULL.csv')
+
+# Initialize the app
+def main():
+    st.set_page_config(page_title="QSR Analyst Bot", layout="wide")
+    st.title("🍟 QSR Data Analysis Bot")
+    
+    # Load data
+    df = load_data()
+    
+    # Connect to OpenAI (paste your API key when prompted)
+    if 'openai_key' not in st.session_state:
+        st.session_state.openai_key = st.text_input("Enter your OpenAI API key:", type="password")
+    
+    if st.session_state.openai_key:
+        openai.api_key = st.session_state.openai_key
         
-        # Convert Month-Year to separate columns
-        df[['MonthName','Year']] = df['Month'].str.split(' ', expand=True)
-        df['Year'] = df['Year'].astype(int)
+        # Question input
+        question = st.text_input("Ask anything about your QSR data:", 
+                               placeholder="e.g. Which store has highest sales?")
         
-        # Calculate GST and sales channels (new logic)
-        if 'Gross Sales' in df.columns and 'Net Sales' in df.columns:
-            df['GST'] = df['Gross Sales'] - df['Net Sales']
-            df['Offline Sales'] = df['GST'] / 0.05  # GST is 5% of offline sales
-            df['Online Sales'] = df['Net Sales'] - df['Offline Sales']
-        
-        return df
-    except Exception as e:
-        st.error(f"Data loading failed: {str(e)}")
-        return None
-
-df = load_data()
-
-# ========== SALES ANALYSIS ==========
-def analyze_sales(month, year):
-    if df is None:
-        return None, None, None
+        if question:
+            with st.spinner("Analyzing..."):
+                try:
+                    # Get AI response
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{
+                            "role": "user",
+                            "content": f"""Analyze this QSR data and answer: {question}
+                            Data info:
+                            - Stores: {df['Store'].nunique()}
+                            - Months: {df['Month'].nunique()}
+                            - Metrics: {', '.join(df['Metric'].unique()[:5])}...
+                            """
+                        }],
+                        temperature=0.3
+                    )
+                    
+                    answer = response.choices[0].message['content']
+                    st.success(answer)
+                    
+                    # Simple visualization
+                    if "sales" in question.lower():
+                        st.subheader("Top Stores")
+                        top_stores = df[df['Metric']=='Gross Sales'].groupby('Store')['Amount (Rs Lakhs)'].mean().nlargest(5)
+                        st.bar_chart(top_stores)
+                    
+                    elif "cost" in question.lower():
+                        st.subheader("Cost Breakdown")
+                        costs = df[df['Metric'].str.contains('Cost')].groupby('Metric')['Amount (Rs Lakhs)'].mean()
+                        st.pie_chart(costs)
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
     
-    monthly_data = df[(df['MonthName'] == month) & (df['Year'] == year)]
-    
-    if monthly_data.empty:
-        return None, None, None
-    
-    # GST and Channel calculations
-    result = {
-        'total_gst': monthly_data['GST'].sum(),
-        'offline_sales': monthly_data['Offline Sales'].sum(),
-        'online_sales': monthly_data['Online Sales'].sum(),
-        'top_store': monthly_data.loc[monthly_data['Amount (₹ Lakhs)'].idxmax()]['Store']
-    }
-    
-    return result
+    st.sidebar.markdown("""
+    **Sample Questions:**
+    - Show top 5 stores by sales
+    - What's our cost structure?
+    - Compare April and May sales
+    """)
 
-# ========== STREAMLIT UI ==========
-st.title("🌯 QSR Sales Analyzer")
-st.header("GST and Sales Channel Breakdown")
-
-if df is not None:
-    # Month-Year Selector
-    col1, col2 = st.columns(2)
-    with col1:
-        month = st.selectbox("Select Month", df['MonthName'].unique())
-    with col2:
-        year = st.selectbox("Select Year", df['Year'].unique())
-    
-    if st.button("Analyze"):
-        analysis = analyze_sales(month, year)
-        
-        if analysis:
-            # Display Metrics
-            st.subheader(f"Results for {month} {year}")
-            
-            cols = st.columns(3)
-            cols[0].metric("Total GST", f"₹{analysis['total_gst']:,.2f}L")
-            cols[1].metric("Offline Sales", f"₹{analysis['offline_sales']:,.2f}L")
-            cols[2].metric("Online Sales", f"₹{analysis['online_sales']:,.2f}L")
-            
-            st.divider()
-            st.subheader(f"🏆 Top Performing Store: {analysis['top_store']}")
-            
-            # Visualization
-            channel_data = pd.DataFrame({
-                'Channel': ['Offline', 'Online'],
-                'Sales': [analysis['offline_sales'], analysis['online_sales']]
-            })
-            st.bar_chart(channel_data.set_index('Channel'))
-        else:
-            st.warning(f"No data available for {month} {year}")
-else:
-    st.error("Data not loaded. Please check your CSV file.")
-
-# Data Preview
-if df is not None:
-    with st.expander("📊 View Processed Data"):
-        st.dataframe(df)
+if __name__ == "__main__":
+    main()
