@@ -6,7 +6,7 @@ import re
 # Load your cleaned data
 @st.cache_data
 def load_data():
-    return pd.read_csv("QSR_CEO_CLEANED_FULL.csv")
+    return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
 
 df = load_data()
 
