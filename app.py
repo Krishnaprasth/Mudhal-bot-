@@ -90,11 +90,32 @@ def get_slowest_to_profit():
     commentary = gpt_generate_commentary(store_df, "why it took the store so long to turn EBITDA positive")
     return f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
 
+# Logic: Store P&L for FY24
+
+def get_store_pl():
+    # Reference latest question or history for store name
+    store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
+    if not store:
+        return "❌ Please mention a valid store name."
+    
+    df_copy = df.copy()
+    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
+    df_copy = df_copy[(df_copy["Month_Parsed"] >= "2023-04-01") & (df_copy["Month_Parsed"] <= "2024-03-31")]
+    df_store = df_copy[df_copy["Store"].str.lower() == store.lower()].sort_values("Month_Parsed")
+
+    if df_store.empty:
+        return f"❌ No data found for {store} in FY24."
+
+    st.dataframe(df_store[["Month", "Net Sales", "Gross margin", "Outlet EBITDA", "Rent"]].reset_index(drop=True))
+    return f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
+
 # Semantic match (basic)
 def semantic_match(query):
     query_lower = query.lower()
     if "turn" in query_lower and "ebitda positive" in query_lower:
         return "get_slowest_to_profit()"
+    if "p&l" in query_lower or "pl" in query_lower:
+        return "get_store_pl()"
     return None
 
 # Main logic
