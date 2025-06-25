@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import openai
+import re
 
 # Load your cleaned data
 @st.cache_data
 def load_data():
-    return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
+    return pd.read_csv("QSR_CEO_CLEANED_FULL.csv")
 
 df = load_data()
 
@@ -25,7 +26,7 @@ user_q = st.text_input(
 
 # Track referenced store
 def detect_store_name(q):
-    for store in df["store"].unique():
+    for store in df["Store"].unique():
         if store.lower() in q.lower():
             return store
     return None
@@ -65,6 +66,7 @@ Return only the code and the summary.
 
 def safe_exec(code_str, local_vars):
     # Limit builtins for safety
+    allowed_builtins = {"pd": pd}
     exec(code_str, {"__builtins__": None, "pd": pd}, local_vars)
 
 def execute_gpt_code(user_q):
@@ -94,19 +96,19 @@ def execute_gpt_code(user_q):
 # Example: Slowest to EBITDA positive
 def get_slowest_to_profit():
     df_copy = df.copy()
-    df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
-    df_sorted = df_copy.sort_values("month_parsed")
+    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
+    df_sorted = df_copy.sort_values("Month_Parsed")
 
-    store_groups = df_sorted.groupby("store")
+    store_groups = df_sorted.groupby("Store")
     time_to_profit = {}
 
     for store, group in store_groups:
-        group = group.sort_values("month_parsed")
-        group["cum_ebitda"] = group["outlet_ebitda"].cumsum()
-        profit_month = group[group["cum_ebitda"] > 0]
+        group = group.sort_values("Month_Parsed")
+        group["Cum_EBITDA"] = group["Outlet EBITDA"].cumsum()
+        profit_month = group[group["Cum_EBITDA"] > 0]
         if not profit_month.empty:
-            start = group["month_parsed"].min()
-            end = profit_month["month_parsed"].iloc[0]
+            start = group["Month_Parsed"].min()
+            end = profit_month["Month_Parsed"].iloc[0]
             time_to_profit[store] = (end - start).days
 
     if not time_to_profit:
@@ -114,7 +116,7 @@ def get_slowest_to_profit():
 
     slowest = max(time_to_profit, key=time_to_profit.get)
     days_taken = time_to_profit[slowest]
-    store_df = df_sorted[df_sorted["store"] == slowest].sort_values("month_parsed")
+    store_df = df_sorted[df_sorted["Store"] == slowest].sort_values("Month_Parsed")
     commentary = gpt_generate_commentary(store_df, "why it took the store so long to turn EBITDA positive")
     return f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
 
@@ -141,14 +143,14 @@ def get_store_pl():
         return "❌ Please mention a valid store name."
 
     df_copy = df.copy()
-    df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
-    df_copy = df_copy[(df_copy["month_parsed"] >= "2023-04-01") & (df_copy["month_parsed"] <= "2024-03-31")]
-    df_store = df_copy[df_copy["store"].str.lower() == store.lower()].sort_values("month_parsed")
+    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
+    df_copy = df_copy[(df_copy["Month_Parsed"] >= "2023-04-01") & (df_copy["Month_Parsed"] <= "2024-03-31")]
+    df_store = df_copy[df_copy["Store"].str.lower() == store.lower()].sort_values("Month_Parsed")
 
     if df_store.empty:
         return f"❌ No data found for {store} in FY24."
 
-    st.dataframe(df_store[["month", "net_sales", "gross_sales", "outlet_ebitda", "rent"]].reset_index(drop=True))
+    st.dataframe(df_store[["Month", "Net Sales", "Gross margin", "Outlet EBITDA", "Rent"]].reset_index(drop=True))
     return f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
 
 # Semantic match for known questions
@@ -165,4 +167,18 @@ if user_q:
     last_store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
     logic = semantic_match(user_q)
     if logic:
-        with st.spinner("Running structured logic..."
+        with st.spinner("Running structured logic..."):
+            result = eval(logic)
+        st.session_state.chat_history.append({"q": user_q, "a": result, "store": last_store})
+        st.markdown(result)
+    else:
+        with st.spinner("Generating answer with GPT fallback..."):
+            execute_gpt_code(user_q)
+        st.session_state.chat_history.append({"q": user_q, "a": "Answered by GPT fallback", "store": last_store})
+
+# Display chat history (last 5)
+if st.session_state.chat_history:
+    st.markdown("---")
+    for i, entry in enumerate(reversed(st.session_state.chat_history[-5:])):
+        st.markdown(f"**Q{i+1}:** {entry['q']}")
+        st.markdown(f"**A{i+1}:** {entry['a']}")
