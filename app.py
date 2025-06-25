@@ -1,73 +1,73 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import openai
+import io
 
-# Load your QSR data
+# === CONFIG ===
+st.set_page_config(page_title="QSR CEO Performance Bot", layout="wide")
+st.title("🤖 QSR CEO Store Performance Assistant")
+
+# === LOAD DATA ===
 @st.cache_data
 def load_data():
-    return pd.read_csv('QSR_CEO_CLEANED_FULL.csv')
+    return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
 
-# Initialize the app
-def main():
-    st.set_page_config(page_title="QSR Analyst Bot", layout="wide")
-    st.title("🍟 QSR Data Analysis Bot")
-    
-    # Load data
+# Option to upload custom file
+uploaded_file = st.sidebar.file_uploader("Upload cleaned store data (CSV)", type=["csv"])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+else:
     df = load_data()
-    
-    # Connect to OpenAI (paste your API key when prompted)
-    if 'openai_key' not in st.session_state:
-        st.session_state.openai_key = st.text_input("Enter your OpenAI API key:", type="password")
-    
-    if st.session_state.openai_key:
-        openai.api_key = st.session_state.openai_key
-        
-        # Question input
-        question = st.text_input("Ask anything about your QSR data:", 
-                               placeholder="e.g. Which store has highest sales?")
-        
-        if question:
-            with st.spinner("Analyzing..."):
-                try:
-                    # Get AI response
-                    response = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=[{
-                            "role": "user",
-                            "content": f"""Analyze this QSR data and answer: {question}
-                            Data info:
-                            - Stores: {df['Store'].nunique()}
-                            - Months: {df['Month'].nunique()}
-                            - Metrics: {', '.join(df['Metric'].unique()[:5])}...
-                            """
-                        }],
-                        temperature=0.3
-                    )
-                    
-                    answer = response.choices[0].message['content']
-                    st.success(answer)
-                    
-                    # Simple visualization
-                    if "sales" in question.lower():
-                        st.subheader("Top Stores")
-                        top_stores = df[df['Metric']=='Gross Sales'].groupby('Store')['Amount (Rs Lakhs)'].mean().nlargest(5)
-                        st.bar_chart(top_stores)
-                    
-                    elif "cost" in question.lower():
-                        st.subheader("Cost Breakdown")
-                        costs = df[df['Metric'].str.contains('Cost')].groupby('Metric')['Amount (Rs Lakhs)'].mean()
-                        st.pie_chart(costs)
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
-    
-    st.sidebar.markdown("""
-    **Sample Questions:**
-    - Show top 5 stores by sales
-    - What's our cost structure?
-    - Compare April and May sales
-    """)
 
-if __name__ == "__main__":
-    main()
+# === QUESTION HANDLER ===
+st.sidebar.markdown("## Ask a question")
+user_question = st.sidebar.text_area("E.g. Which store had highest net sales in April 2024?", height=100)
+
+# === ANSWER HISTORY ===
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# === OPENAI GPT FUNCTION ===
+def ask_gpt(query, data_sample):
+    prompt = f"""
+You are a data analyst assistant. A CEO has asked the following question:
+
+"{query}"
+
+You have access to the following dataset sample:
+{data_sample}
+
+Return the answer in a clear table or summary, using only the data.
+"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"❌ GPT failed: {e}"
+
+# === HANDLE QUERY ===
+if st.sidebar.button("Get Answer") and user_question:
+    sample = df.head(20).to_markdown()
+    answer = ask_gpt(user_question, sample)
+    st.session_state.history.append((user_question, answer))
+
+# === DISPLAY CURRENT ANSWER ===
+if st.session_state.history:
+    last_q, last_a = st.session_state.history[-1]
+    st.subheader("💬 Question")
+    st.write(last_q)
+    st.subheader("📊 Answer")
+    st.markdown(last_a)
+
+    # Option to download last answer
+    if st.download_button("⬇️ Download Answer", data=last_a, file_name="answer.txt"):
+        pass
+
+# === HISTORY ===
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📜 History")
+for i, (q, a) in enumerate(reversed(st.session_state.history[-10:])):
+    st.sidebar.markdown(f"**Q{i+1}:** {q}")
