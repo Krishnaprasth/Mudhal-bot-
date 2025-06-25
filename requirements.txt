@@ -1,7 +1,0 @@
-streamlit
-pandas
-openai
-faiss-cpu
-sentence-transformers
-Pillow
-requests
