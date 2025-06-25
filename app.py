@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import openai
+from openai import OpenAI
 
-# Load your cleaned data
+# Initialize OpenAI client
+client = OpenAI()
+
+# Load your cleaned data from the correct CSV file
 @st.cache_data
 def load_data():
     return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
@@ -45,7 +48,7 @@ After the code, provide a brief summary of findings separated by a line '---SUMM
 
 Return only the code and the summary.
 """
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
@@ -83,8 +86,6 @@ def execute_gpt_code(user_q):
     if summary:
         st.markdown(f"**Insight:** {summary}")
 
-# Structured Logic Examples
-
 def get_slowest_to_profit():
     df_copy = df.copy()
     df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
@@ -117,7 +118,7 @@ You are a data analyst for a QSR chain. Given the following store data:
 
 Write a short 2-3 sentence insight about: {topic}. Mention key patterns using available metrics.
 """
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
@@ -140,51 +141,12 @@ def get_store_pl():
     st.dataframe(df_store[["month", "net_sales", "gross_sales", "outlet_ebitda", "rent"]].reset_index(drop=True))
     return f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
 
-def get_mom_growth(threshold=5, months=3):
-    store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
-    if not store:
-        return "❌ Please mention a valid store name."
-    df_store = df[df["store"].str.lower() == store.lower()].copy()
-    df_store["month_parsed"] = pd.to_datetime(df_store["month"], format="%B %Y")
-    df_store.sort_values("month_parsed", inplace=True)
-    df_store["mom_growth"] = df_store["net_sales"].pct_change() * 100
-    # Check for consecutive growth months >= threshold
-    count = 0
-    for val in df_store["mom_growth"].dropna():
-        if val >= threshold:
-            count += 1
-        else:
-            count = 0
-        if count >= months:
-            st.write(f"✅ {store} has {count} consecutive months with MoM sales growth >= {threshold}%.")
-            break
-    else:
-        st.write(f"❌ {store} does not have {months} consecutive months with MoM sales growth >= {threshold}%.")
-    st.dataframe(df_store[["month", "net_sales", "mom_growth"]])
-    return "📈 MoM growth check complete."
-
-def get_correlation_metric(metric1="marketing_&_advertisement", metric2="outlet_ebitda"):
-    corr = df.groupby("store")[[metric1, metric2]].corr().iloc[0::2,-1].reset_index()
-    st.dataframe(corr[["store", metric1]])
-    return f"📊 Correlation between {metric1} and {metric2} per store shown above."
-
-def get_missing_data_report():
-    missing = df.isnull().sum()
-    st.dataframe(missing)
-    return "⚠️ Missing data report shown."
-
 def semantic_match(query):
     q = query.lower()
     if "turn" in q and "ebitda positive" in q:
         return "get_slowest_to_profit()"
     if "p&l" in q or "pl" in q:
         return "get_store_pl()"
-    if "mom growth" in q:
-        return "get_mom_growth()"
-    if "correlation" in q:
-        return "get_correlation_metric()"
-    if "missing data" in q or "null" in q or "empty" in q:
-        return "get_missing_data_report()"
     return None
 
 if user_q:
