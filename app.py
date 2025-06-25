@@ -6,7 +6,6 @@ from openai import OpenAI
 # Initialize OpenAI client
 client = OpenAI()
 
-# Load your cleaned data from the correct CSV file
 @st.cache_data
 def load_data():
     return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
@@ -62,6 +61,16 @@ Return only the code and the summary.
 
     return code.strip(), summary.strip()
 
+def clean_code(code_str):
+    lines = code_str.strip().splitlines()
+    # Remove any leading lines with ``` or 'Code:' or '```python'
+    while lines and (lines[0].strip().startswith("```") or lines[0].strip().lower().startswith("```python") or lines[0].strip().lower() == "code:" or lines[0].strip() == ""):
+        lines.pop(0)
+    # Remove any trailing lines with ```
+    while lines and lines[-1].strip().startswith("```"):
+        lines.pop()
+    return "\n".join(lines).strip()
+
 def safe_exec(code_str, local_vars):
     exec(code_str, {"__builtins__": None, "pd": pd, "np": np}, local_vars)
 
@@ -70,6 +79,7 @@ def execute_gpt_code(user_q):
     columns = list(df.columns)
 
     code, summary = gpt_fallback_query(user_q, df_sample, columns)
+    code = clean_code(code)
 
     local_vars = {"df_sample": df.copy()}
     try:
