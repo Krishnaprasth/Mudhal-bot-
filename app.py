@@ -1,159 +1,120 @@
 import streamlit as st
 import pandas as pd
 import openai
-import faiss
-import numpy as np
-import json
-from sentence_transformers import SentenceTransformer
-import requests
-from PIL import Image
-from io import BytesIO
 
-# === CONFIG ===
-st.set_page_config(page_title="Query Buddy: Store Metrics HQ", layout="centered", initial_sidebar_state="expanded")
-
-# === LOGO ===
-logo_url = "https://www.californiaburrito.in/images/logo.png"
-try:
-    response = requests.get(logo_url)
-    if response.status_code == 200:
-        logo = Image.open(BytesIO(response.content))
-        st.image(logo, width=180)
-except Exception:
-    st.title("🤖 QSR CEO Store Performance Assistant")
-
-st.markdown("""
-    <style>
-    .stApp {
-        font-family: 'Segoe UI', sans-serif;
-        background-color: #f6f9fc;
-    }
-    .question-box {
-        background: white;
-        padding: 1.2rem;
-        border-radius: 1rem;
-        box-shadow: 0 0 10px rgba(0,0,0,0.05);
-        margin-bottom: 1rem;
-    }
-    .answer-box {
-        background: #ffffff;
-        padding: 1.2rem;
-        border-left: 6px solid #2E8B57;
-        border-radius: 1rem;
-        box-shadow: 0 0 10px rgba(0,0,0,0.05);
-        margin-bottom: 2rem;
-    }
-    .suggestions {
-        font-size: 0.85rem;
-        color: #666;
-        margin-top: 0.5rem;
-    }
-    .css-1kyxreq.edgvbvh3 { padding-top: 0rem; }
-    </style>
-""", unsafe_allow_html=True)
-
-# === LOAD DATA ===
+# Load your cleaned data
 @st.cache_data
 def load_data():
-    return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
+    return pd.read_csv("QSR_CEO_CLEANED_FULL.csv")
 
 df = load_data()
 
-# === EMBEDDING SETUP ===
-@st.cache_resource
-def load_embedding_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+st.set_page_config(layout="wide")
+st.title("📊 Store Metrics HQ – Your Query Buddy")
 
-@st.cache_resource
-def load_semantic_qna():
-    with open("semantic_qna.json") as f:
-        data = json.load(f)
-    return data["questions"], data["answers"]
+# Store conversation state
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-@st.cache_resource
-def build_semantic_index(questions):
-    model = load_embedding_model()
-    embeddings = model.encode(questions)
-    index = faiss.IndexFlatL2(embeddings.shape[1])
-    index.add(np.array(embeddings))
-    return index, embeddings, questions
+# Get user input
+user_q = st.text_input("Ask a question about store performance:", placeholder="e.g., Which store took the longest to turn EBITDA positive?", key="q")
 
-# Load semantic Q&A
-prebuilt_questions, prebuilt_answers = load_semantic_qna()
-index, embeddings, stored_questions = build_semantic_index(prebuilt_questions)
+# Track referenced store
+def detect_store_name(q):
+    for store in df["Store"].unique():
+        if store.lower() in q.lower():
+            return store
+    return None
 
-# === GPT FALLBACK ===
-def ask_gpt(query, data_sample):
+# GPT fallback logic
+def gpt_fallback_query(user_q, last_store=None):
+    store_hint = f" You may reference the store '{last_store}'." if last_store else ""
     prompt = f"""
-You are a data analyst assistant. A CEO has asked the following question:
+You are helping answer CEO queries about QSR store data. Given this question:{store_hint}
 
-"{query}"
+\"{user_q}\"
 
-You have access to the following dataset sample:
-{data_sample}
+Suggest the best Python function call from the following dataset:
+- Columns: 'Net Sales', 'Gross margin', 'COGS (food +packaging)', 'Outlet EBITDA', 'Rent', 'CAM', 'Utility Cost', 'Aggregator commission', 'Marketing & advertisement', 'Other opex expenses', 'Month', 'Store'
+- Use logical function names like get_store_pl(), get_top_n(), get_ratio(), get_slowest_to_profit(), etc.
 
-Return the answer in a clear table or summary, using only the data.
+Return only the function call. Do NOT explain it.
 """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+# GPT commentary engine
+def gpt_generate_commentary(store_df, topic):
+    prompt = f"""
+You are a data analyst for a QSR chain. Given the following store data:
+
+{store_df.to_string(index=False)}
+
+Write a short 2-3 sentence insight about: {topic}. Mention key patterns using available metrics.
+"""
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
+    )
+    return response.choices[0].message.content.strip()
+
+# Logic: Slowest to EBITDA positive
+def get_slowest_to_profit():
+    df_copy = df.copy()
+    df_copy["Month_Parsed"] = pd.to_datetime(df_copy["Month"], format="%B %Y")
+    df_sorted = df_copy.sort_values("Month_Parsed")
+
+    store_groups = df_sorted.groupby("Store")
+    time_to_profit = {}
+
+    for store, group in store_groups:
+        group = group.sort_values("Month_Parsed")
+        group["Cum_EBITDA"] = group["Outlet EBITDA"].cumsum()
+        profit_month = group[group["Cum_EBITDA"] > 0]
+        if not profit_month.empty:
+            start = group["Month_Parsed"].min()
+            end = profit_month["Month_Parsed"].iloc[0]
+            time_to_profit[store] = (end - start).days
+
+    if not time_to_profit:
+        return "❌ No stores turned profitable yet"
+
+    slowest = max(time_to_profit, key=time_to_profit.get)
+    days_taken = time_to_profit[slowest]
+    store_df = df_sorted[df_sorted["Store"] == slowest].sort_values("Month_Parsed")
+    commentary = gpt_generate_commentary(store_df, "why it took the store so long to turn EBITDA positive")
+    return f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
+
+# Semantic match (basic)
+def semantic_match(query):
+    query_lower = query.lower()
+    if "turn" in query_lower and "ebitda positive" in query_lower:
+        return "get_slowest_to_profit()"
+    return None
+
+# Main logic
+if user_q:
+    last_store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
+    logic = semantic_match(user_q)
+    if not logic:
+        logic = gpt_fallback_query(user_q, last_store)
+
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"❌ GPT failed: {e}"
-
-# === SEMANTIC ROUTER ===
-def semantic_match(user_q):
-    model = load_embedding_model()
-    user_embedding = model.encode([user_q])
-    D, I = index.search(np.array(user_embedding), k=1)
-    if D[0][0] < 50:
-        return prebuilt_answers[I[0][0]]
-    else:
-        return None
-
-# === INPUT & QUERY ===
-example_questions = [
-    "What was the net sales of KOR in May 2025?",
-    "Which store had the highest EBITDA in FY2024?",
-    "Rank stores by rent in Q2 FY2025",
-    "What is the SSG of EGL in Q3 FY2024?"
-]
-st.markdown("<div class='suggestions'>💡 Try: " + " | ".join(example_questions) + "</div>", unsafe_allow_html=True)
-user_question = st.text_input("Ask your question about store performance", placeholder="e.g. What is the rent of KOR in April 2024?")
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-if user_question:
-    logic = semantic_match(user_question)
-    if logic:
-        try:
+        with st.spinner("Thinking..."):
             result = eval(logic)
-            if isinstance(result, (pd.DataFrame, pd.Series)):
-                st.session_state.history.append((user_question, result.to_frame() if isinstance(result, pd.Series) else result))
-            else:
-                st.session_state.history.append((user_question, str(result)))
-        except Exception as e:
-            st.session_state.history.append((user_question, f"❌ Logic Error: {e}"))
-    else:
-        sample = df.head(20).to_markdown()
-        response = ask_gpt(user_question, sample)
-        st.session_state.history.append((user_question, response))
+        st.session_state.chat_history.append({"q": user_q, "a": result, "store": last_store})
+        st.markdown(result)
+    except Exception as e:
+        st.error(f"❌ Error running: {logic}\n{e}")
 
-# === DISPLAY ===
-if st.session_state.history:
-    last_q, last_a = st.session_state.history[-1]
-    st.markdown(f"<div class='question-box'><h4>💬 Question</h4>{last_q}</div>", unsafe_allow_html=True)
-    if isinstance(last_a, (pd.DataFrame, pd.Series)):
-        st.markdown("<div class='answer-box'><h4>📊 Answer</h4></div>", unsafe_allow_html=True)
-        st.dataframe(last_a, use_container_width=True)
-        st.download_button("⬇️ Download as Excel", data=last_a.to_csv(index=False), file_name="answer.csv")
-    else:
-        st.markdown(f"<div class='answer-box'><h4>📊 Answer</h4>{last_a}</div>", unsafe_allow_html=True)
-
-# === SIDEBAR HISTORY ===
-st.sidebar.markdown("### 📜 Question History")
-for i, (q, a) in enumerate(reversed(st.session_state.history[-10:])):
-    st.sidebar.markdown(f"**Q{i+1}:** {q}")
+# Chat history display
+if st.session_state.chat_history:
+    st.markdown("---")
+    for i, entry in enumerate(reversed(st.session_state.chat_history[-5:])):
+        st.markdown(f"**Q{i+1}:** {entry['q']}")
+        st.markdown(f"**A{i+1}:** {entry['a']}")
