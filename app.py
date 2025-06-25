@@ -9,6 +9,7 @@ client = OpenAI()
 
 @st.cache_data
 def load_data():
+    # Adjust the CSV filename as needed
     return pd.read_csv("QSR_CEO_CLEANED_READY.csv")
 
 df = load_data()
@@ -21,7 +22,7 @@ if "chat_history" not in st.session_state:
 
 user_q = st.text_input(
     "Ask a question about store performance:",
-    placeholder="e.g., Which store had the highest gross sales in December 2024?",
+    placeholder="e.g., Which store had the highest gross sales in Dec-24 or FY25?",
     key="q",
 )
 
@@ -40,7 +41,7 @@ METRICS_MAP = {
     "aggregator commission": "aggregator_commission",
     "cam": "cam",
     "other opex": "other_opex_expenses",
-    "margin": "gross_margin",  # adjust if you have this column
+    "margin": "gross_margin",  # Adjust if you have this column
 }
 
 STORE_NAMES = [s.lower() for s in df["store"].unique()]
@@ -58,62 +59,94 @@ def extract_store(question):
     return None
 
 def extract_time_period(question):
-    month_year_match = re.search(r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s?(\d{2,4})", question, re.IGNORECASE)
+    # Match Month-Year like "Dec 24" or "December 2024" or "Dec-24"
+    month_year_match = re.search(
+        r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[\s\-]?(\d{2,4})", 
+        question, re.IGNORECASE)
     if month_year_match:
-        month = month_year_match.group(1).capitalize()
+        month_abbr = month_year_match.group(1)[:3].capitalize()  # Dec
         year = month_year_match.group(2)
-        if len(year) == 2:
-            year = "20" + year
-        return f"{month} {year}"
+        if len(year) == 4:
+            year = year[2:]
+        return f"{month_abbr}-{year}"
+
+    # Match Quarter + FY, e.g., "Q3 FY25"
     qfy_match = re.search(r"(q[1-4])\s*fy\s*(\d{2,4})", question, re.IGNORECASE)
     if qfy_match:
         quarter = qfy_match.group(1).upper()
         fy_year = qfy_match.group(2)
-        if len(fy_year) == 2:
-            fy_year = "20" + fy_year
-        return f"{quarter} FY{fy_year[-2:]}"
+        if len(fy_year) == 4:
+            fy_year = fy_year[2:]
+        return f"{quarter} FY{fy_year}"
+
+    # Match just FY, e.g., "FY25"
     fy_year_match = re.search(r"fy\s*(\d{2,4})", question, re.IGNORECASE)
     if fy_year_match:
         fy_year = fy_year_match.group(1)
-        if len(fy_year) == 2:
-            fy_year = "20" + fy_year
-        return f"FY{fy_year[-2:]}"
+        if len(fy_year) == 4:
+            fy_year = fy_year[2:]
+        return f"FY{fy_year}"
+
     return None
 
 def filter_df_by_time(df_local, time_period):
     if time_period is None:
         return df_local
-    if re.match(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", time_period):
+
+    # Parse month column if not already parsed
+    if "month_parsed" not in df_local.columns:
+        df_local["month_parsed"] = pd.to_datetime(df_local["month"], format="%b-%y", errors="coerce")
+
+    # Month-Year filter e.g., "Dec-24"
+    if re.match(r"^[A-Za-z]{3}-\d{2}$", time_period):
         return df_local[df_local["month"].str.lower() == time_period.lower()]
+
+    # Quarter FY filter e.g., "Q3 FY25"
     qfy_match = re.match(r"^(Q[1-4]) FY(\d{2})$", time_period, re.IGNORECASE)
     if qfy_match:
         quarter = qfy_match.group(1).upper()
-        fy = int("20"+qfy_match.group(2))
+        fy_year = int("20" + qfy_match.group(2))
+
         quarter_months = {
-            "Q1": ["April", "May", "June"],
-            "Q2": ["July", "August", "September"],
-            "Q3": ["October", "November", "December"],
-            "Q4": ["January", "February", "March"]
+            "Q1": [4, 5, 6],
+            "Q2": [7, 8, 9],
+            "Q3": [10, 11, 12],
+            "Q4": [1, 2, 3],
         }
-        months = quarter_months.get(quarter, [])
-        df_local["month_parsed"] = pd.to_datetime(df_local["month"], format="%B %Y", errors='coerce')
+
+        months = quarter_months[quarter]
+
+        if quarter == "Q4":
+            start_date = pd.Timestamp(year=fy_year + 1, month=1, day=1)
+            end_date = pd.Timestamp(year=fy_year + 1, month=3, day=31)
+        else:
+            start_date = pd.Timestamp(year=fy_year, month=months[0], day=1)
+            end_month = months[-1]
+            end_day = pd.Timestamp(year=fy_year, month=end_month, day=1).days_in_month
+            end_date = pd.Timestamp(year=fy_year, month=end_month, day=end_day)
+
         return df_local[
-            (df_local["month_parsed"].dt.year == fy) &
-            (df_local["month_parsed"].dt.month.isin([pd.to_datetime(m, format="%B").month for m in months]))
+            (df_local["month_parsed"] >= start_date) & (df_local["month_parsed"] <= end_date)
         ]
+
+    # FY filter e.g., "FY25"
     fy_match = re.match(r"^FY(\d{2})$", time_period, re.IGNORECASE)
     if fy_match:
-        fy = int("20"+fy_match.group(1))
-        df_local["month_parsed"] = pd.to_datetime(df_local["month"], format="%B %Y", errors='coerce')
-        start = pd.Timestamp(year=fy, month=4, day=1)
-        end = pd.Timestamp(year=fy+1, month=3, day=31)
-        return df_local[(df_local["month_parsed"] >= start) & (df_local["month_parsed"] <= end)]
+        fy_year = int("20" + fy_match.group(1))
+        start_date = pd.Timestamp(year=fy_year, month=4, day=1)
+        end_date = pd.Timestamp(year=fy_year + 1, month=3, day=31)
+        return df_local[
+            (df_local["month_parsed"] >= start_date) & (df_local["month_parsed"] <= end_date)
+        ]
+
     return df_local
 
 def generate_commentary(store, metric, df_filtered):
     avg_val = df_filtered[metric].mean()
     max_val = df_filtered[metric].max()
-    max_month = df_filtered.loc[df_filtered[metric].idxmax()]["month"] if not df_filtered.empty else "N/A"
+    max_month = (
+        df_filtered.loc[df_filtered[metric].idxmax()]["month"] if not df_filtered.empty else "N/A"
+    )
     return (
         f"The average {metric.replace('_',' ')} for store {store.upper()} in the selected period is ₹{avg_val:,.2f}. "
         f"The highest was ₹{max_val:,.2f} in {max_month}."
