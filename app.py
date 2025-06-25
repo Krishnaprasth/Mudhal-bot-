@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 from openai import OpenAI
 
 # Initialize OpenAI client
@@ -63,16 +64,31 @@ Return only the code and the summary.
 
 def clean_code(code_str):
     lines = code_str.strip().splitlines()
-    # Remove any leading lines with ``` or 'Code:' or '```python'
     while lines and (lines[0].strip().startswith("```") or lines[0].strip().lower().startswith("```python") or lines[0].strip().lower() == "code:" or lines[0].strip() == ""):
         lines.pop(0)
-    # Remove any trailing lines with ```
     while lines and lines[-1].strip().startswith("```"):
         lines.pop()
     return "\n".join(lines).strip()
 
 def safe_exec(code_str, local_vars):
     exec(code_str, {"__builtins__": None, "pd": pd, "np": np}, local_vars)
+
+def to_excel_bytes(df):
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    return output.getvalue()
+
+def display_answer_with_optional_data(answer_text, df_result=None):
+    st.markdown(answer_text)
+    if df_result is not None:
+        st.dataframe(df_result)
+        excel_bytes = to_excel_bytes(df_result)
+        st.download_button(
+            label="📥 Download data as Excel",
+            data=excel_bytes,
+            file_name="data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 def execute_gpt_code(user_q):
     df_sample = df.head(20).to_csv(index=False)
@@ -86,15 +102,19 @@ def execute_gpt_code(user_q):
         safe_exec(code, local_vars)
         result = local_vars.get("result", None)
         if isinstance(result, pd.DataFrame):
-            st.dataframe(result)
+            answer_text = summary or "Here is the data you requested:"
+            display_answer_with_optional_data(answer_text, result)
+            return answer_text, result
         else:
-            st.write(result)
+            answer_text = str(result)
+            if summary:
+                answer_text += f"\n\n🧠 Insight: {summary}"
+            st.markdown(answer_text)
+            return answer_text, None
     except Exception as e:
         st.error(f"Error executing GPT code: {e}")
         st.text(f"Code tried to execute:\n{code}")
-
-    if summary:
-        st.markdown(f"**Insight:** {summary}")
+        return f"Error executing GPT code: {e}", None
 
 def get_slowest_to_profit():
     df_copy = df.copy()
@@ -112,13 +132,14 @@ def get_slowest_to_profit():
             time_to_profit[store] = (end - start).days
 
     if not time_to_profit:
-        return "❌ No stores turned profitable yet"
+        return ("❌ No stores turned profitable yet", None)
 
     slowest = max(time_to_profit, key=time_to_profit.get)
     days_taken = time_to_profit[slowest]
     store_df = df_sorted[df_sorted["store"] == slowest].sort_values("month_parsed")
     commentary = gpt_generate_commentary(store_df, "why it took the store so long to turn EBITDA positive")
-    return f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
+    answer = f"🐢 **{slowest}** took the longest to turn EBITDA positive – **{days_taken // 30} months approx**\n\n🧠 GPT Insight: {commentary}"
+    return answer, None
 
 def gpt_generate_commentary(store_df, topic):
     prompt = f"""
@@ -138,7 +159,7 @@ Write a short 2-3 sentence insight about: {topic}. Mention key patterns using av
 def get_store_pl():
     store = detect_store_name(user_q) or (st.session_state.chat_history[-1]["store"] if st.session_state.chat_history else None)
     if not store:
-        return "❌ Please mention a valid store name."
+        return ("❌ Please mention a valid store name.", None)
 
     df_copy = df.copy()
     df_copy["month_parsed"] = pd.to_datetime(df_copy["month"], format="%B %Y")
@@ -146,10 +167,17 @@ def get_store_pl():
     df_store = df_copy[df_copy["store"].str.lower() == store.lower()].sort_values("month_parsed")
 
     if df_store.empty:
-        return f"❌ No data found for {store} in FY24."
+        return (f"❌ No data found for {store} in FY24.", None)
 
-    st.dataframe(df_store[["month", "net_sales", "gross_sales", "outlet_ebitda", "rent"]].reset_index(drop=True))
-    return f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
+    answer = f"📊 P&L data shown for **{store}** for FY24. Use download option for full table."
+    return answer, df_store[["month", "net_sales", "gross_sales", "outlet_ebitda", "rent"]].reset_index(drop=True)
+
+def get_highest_revenue_store():
+    rev_by_store = df.groupby("store")["gross_sales"].sum().reset_index()
+    top_row = rev_by_store.loc[rev_by_store["gross_sales"].idxmax()]
+    answer = f"🏆 Highest revenue store: **{top_row['store']}** with ₹{top_row['gross_sales']:,.2f}"
+    commentary = "This store has shown consistent strong sales across all months."
+    return f"{answer}\n\n🧠 Insight: {commentary}", None
 
 def semantic_match(query):
     q = query.lower()
@@ -157,6 +185,8 @@ def semantic_match(query):
         return "get_slowest_to_profit()"
     if "p&l" in q or "pl" in q:
         return "get_store_pl()"
+    if "highest revenue" in q or "top revenue" in q:
+        return "get_highest_revenue_store()"
     return None
 
 if user_q:
@@ -164,13 +194,13 @@ if user_q:
     logic = semantic_match(user_q)
     if logic:
         with st.spinner("Running structured logic..."):
-            result = eval(logic)
-        st.session_state.chat_history.append({"q": user_q, "a": result, "store": last_store})
-        st.markdown(result)
+            answer_text, df_result = eval(logic)
+        display_answer_with_optional_data(answer_text, df_result)
+        st.session_state.chat_history.append({"q": user_q, "a": answer_text, "store": last_store})
     else:
         with st.spinner("Generating answer with GPT fallback..."):
-            execute_gpt_code(user_q)
-        st.session_state.chat_history.append({"q": user_q, "a": "Answered by GPT fallback", "store": last_store})
+            answer_text, df_result = execute_gpt_code(user_q)
+        st.session_state.chat_history.append({"q": user_q, "a": answer_text, "store": last_store})
 
 if st.session_state.chat_history:
     st.markdown("---")
