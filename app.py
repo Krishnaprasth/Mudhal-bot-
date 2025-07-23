@@ -1,92 +1,208 @@
-# app.py
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import openai
-import chromadb
-from sentence_transformers import SentenceTransformer
-import numpy as np
+from datetime import datetime
 
-# --- Configurations ---
-st.set_page_config(page_title="QSR CEO Bot", layout="wide")
-st.title("QSR CEO Performance Bot")
+# Page configuration
+st.set_page_config(
+    page_title="Retail Analytics Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- Load Data ---
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main {padding: 2rem;}
+    .stTextInput input {font-size: 16px !important;}
+    .stDataFrame {border-radius: 10px;}
+</style>
+""", unsafe_allow_html=True)
+
 @st.cache_data
 def load_data():
-    return pd.read_csv("QSR_CEO_CLEANED_FY22_TO_FY26_FULL_FINAL.csv")
+    """Load data from CSV with error handling"""
+    try:
+        df = pd.read_csv('sales_data.csv')
+        # Convert Month to datetime if needed
+        if 'Month' in df.columns:
+            df['Month'] = pd.to_datetime(df['Month'], format='%Y-%b', errors='coerce')
+        return df
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return pd.DataFrame()
 
-df = load_data()
-
-# --- Initialize Embeddings + ChromaDB ---
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client = chromadb.Client()
-collection_name = "qsr_ceo_questions"
-
-if collection_name not in chroma_client.list_collections():
-    chroma_client.create_collection(name=collection_name)
-collection = chroma_client.get_collection(name=collection_name)
-
-# --- OpenAI Setup ---
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-# --- GPT Fallback Function ---
-def gpt_fallback(question: str, context: str) -> str:
-    messages = [
-        {"role": "system", "content": "You are a helpful performance analytics bot for a QSR chain."},
-        {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{question}"}
-    ]
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=messages
-    )
-    return response.choices[0].message.content.strip()
-
-# --- Logic Answer Engine ---
-def answer_with_logic(query: str):
-    q = query.lower()
-    if "net sales" in q and "fy" in q and "store" in q:
-        try:
-            store = next(w for w in q.split() if w.isupper() and len(w) in [3, 4])
-            fy = next(w.upper() for w in q.split() if w.startswith("fy"))
-            result = df[(df["Metric"] == "Net Sales") & (df["Store"] == store) & (df["FY"] == fy)]
-            if result.empty:
-                return None
-            return result[["Month-Year", "Amount (in lakhs)"]].sort_values("Month-Year")
-        except Exception:
-            return None
-    return None
-
-# --- Main Query Handler ---
-query = st.text_input("Ask a performance question:")
-
-if query:
-    response = answer_with_logic(query)
-
-    if response is not None:
-        st.success("Answered using logic engine")
-        st.dataframe(response)
+def initialize_openai():
+    """Initialize OpenAI API key"""
+    if 'OPENAI_API_KEY' in st.secrets:
+        openai.api_key = st.secrets['OPENAI_API_KEY']
+    elif 'openai_api_key' in st.session_state:
+        openai.api_key = st.session_state.openai_api_key
     else:
-        # Vector Search from ChromaDB
-        query_vec = embedder.encode([query])[0].tolist()
-        results = collection.query(query_embeddings=[query_vec], n_results=5)
-        context = "\n".join(results.get("documents", [])[0]) if results.get("documents") else ""
+        openai.api_key = None
 
-        gpt_response = gpt_fallback(query, context)
-        st.info("Answered using GPT fallback")
-        st.markdown(gpt_response)
+def analyze_with_openai(query, df):
+    """Use OpenAI to interpret natural language queries"""
+    if not openai.api_key:
+        return None
+        
+    prompt = f"""
+    Analyze this retail data query. Available columns: {', '.join(df.columns)}.
+    Data sample: {df.head(2).to_dict()}
 
-    # Store query history
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    st.session_state.history.append((query, response if response is not None else gpt_response))
+    Question: "{query}"
 
-# --- Sidebar History ---
-with st.sidebar:
-    st.subheader("Query History")
-    if "history" in st.session_state:
-        for q, a in reversed(st.session_state.history):
-            st.markdown(f"**Q:** {q}")
-            if isinstance(a, pd.DataFrame):
-                st.dataframe(a)
-            else:
-                st.markdown(f"**A:** {a}")
+    Respond with JSON containing:
+    - "filters": list of pandas query conditions
+    - "group_by": columns for grouping
+    - "aggregation": "sum/mean/max/min"
+    - "viz_type": "line/bar/pie/table"
+    - "interpretation": human-readable explanation
+    """
+    
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=500
+        )
+        return eval(response.choices[0].message.content)
+    except Exception as e:
+        st.error(f"AI analysis failed: {str(e)}")
+        return None
+
+def apply_analysis(df, analysis):
+    """Apply the analysis parameters to the dataframe"""
+    try:
+        # Apply filters
+        if analysis.get('filters'):
+            for condition in analysis['filters']:
+                df = df.query(condition)
+        
+        # Apply grouping
+        if analysis.get('group_by'):
+            agg_func = analysis.get('aggregation', 'sum')
+            df = df.groupby(analysis['group_by']).agg({'Amount': agg_func}).reset_index()
+        
+        return df
+    except Exception as e:
+        st.error(f"Data processing error: {str(e)}")
+        return pd.DataFrame()
+
+def render_visualization(df, viz_type):
+    """Generate appropriate visualization"""
+    if df.empty:
+        return
+        
+    try:
+        viz_type = viz_type.lower()
+        if viz_type == 'line' and 'Month' in df.columns:
+            fig = px.line(df, x='Month', y='Amount', 
+                         color='Store' if 'Store' in df.columns else None,
+                         title="Trend Analysis")
+        elif viz_type == 'bar':
+            fig = px.bar(df, x=df.columns[0], y='Amount',
+                        color=df.columns[1] if len(df.columns) > 2 else None,
+                        title="Comparative Analysis")
+        elif viz_type == 'pie' and len(df) < 20:
+            fig = px.pie(df, names=df.columns[0], values='Amount',
+                        title="Distribution Analysis")
+        else:
+            fig = px.bar(df, x=df.columns[0], y='Amount')  # Default
+            
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Visualization error: {str(e)}")
+
+def show_data_summary(df):
+    """Display key metrics summary"""
+    if df.empty:
+        return
+        
+    with st.expander("📊 Quick Summary", expanded=True):
+        cols = st.columns(4)
+        cols[0].metric("Total Stores", df['Store'].nunique())
+        cols[1].metric("Time Period", 
+                      f"{df['Month'].min().strftime('%b %Y')} to {df['Month'].max().strftime('%b %Y')}")
+        cols[2].metric("Total Sales (Lakhs)", round(df['Amount'].sum(), 2))
+        cols[3].metric("Avg Monthly Sales", round(df['Amount'].mean(), 2))
+
+def main():
+    st.title("🏪 Retail Analytics Dashboard")
+    st.markdown("Analyze multi-store performance with natural language queries")
+    
+    # Load data
+    df = load_data()
+    if df.empty:
+        st.warning("No data loaded. Please ensure sales_data.csv exists.")
+        return
+    
+    # Initialize OpenAI
+    initialize_openai()
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("Configuration")
+        
+        if not openai.api_key:
+            api_key = st.text_input("Enter OpenAI API Key", type="password")
+            if api_key:
+                st.session_state.openai_api_key = api_key
+                openai.api_key = api_key
+                st.success("API key configured!")
+        
+        st.markdown("---")
+        st.write("💡 Try these sample queries:")
+        st.code("Show sales trend for ITPL store")
+        st.code("Compare monthly sales between stores")
+        st.code("Which store had highest sales last year?")
+        st.markdown("---")
+        st.write(f"Loaded {len(df)} records")
+    
+    # Main interface
+    tab1, tab2 = st.tabs(["🔍 Smart Analysis", "📋 Data Explorer"])
+    
+    with tab1:
+        query = st.text_input("Ask a question about your data:", 
+                            placeholder="e.g. Show sales trends by store",
+                            help="Use natural language to query your data")
+        
+        if st.button("Analyze", type="primary"):
+            if query:
+                with st.spinner("Analyzing your query..."):
+                    analysis = analyze_with_openai(query, df)
+                    
+                    if analysis:
+                        st.markdown(f"**Interpretation:** {analysis.get('interpretation', '')}")
+                        result_df = apply_analysis(df, analysis)
+                        
+                        if not result_df.empty:
+                            st.dataframe(result_df, use_container_width=True)
+                            render_visualization(result_df, analysis.get('viz_type', 'table'))
+                    else:
+                        st.warning("Could not analyze query. Try standard view.")
+    
+    with tab2:
+        st.header("Standard Data Exploration")
+        show_data_summary(df)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_metric = st.selectbox("Select Metric", df['Metric'].unique())
+        with col2:
+            selected_stores = st.multiselect("Select Stores", df['Store'].unique())
+        
+        filtered_df = df[df['Metric'] == selected_metric]
+        if selected_stores:
+            filtered_df = filtered_df[filtered_df['Store'].isin(selected_stores)]
+        
+        if not filtered_df.empty:
+            fig = px.line(filtered_df, x='Month', y='Amount', color='Store',
+                         title=f"{selected_metric} Trend")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(filtered_df.sort_values('Month'), use_container_width=True)
+
+if __name__ == "__main__":
+    main()
